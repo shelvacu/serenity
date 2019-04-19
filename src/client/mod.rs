@@ -310,7 +310,7 @@ impl Client {
     /// Creates a Client for a bot user.
     ///
     /// Discord has a requirement of prefixing bot tokens with `"Bot "`, which
-    /// this function will automatically do for you if not already included.
+    /// this function will NOT do for you.
     ///
     /// # Examples
     ///
@@ -340,11 +340,7 @@ impl Client {
         where H: EventHandler + Send + Sync + 'static {
         let token = token.trim();
 
-        let token = if token.starts_with("Bot ") {
-            token.to_string()
-        } else {
-            format!("Bot {}", token)
-        };
+        let token = token.to_string();
 
         http::set_token(&token);
         let locked = Arc::new(Mutex::new(token));
