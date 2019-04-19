@@ -108,8 +108,9 @@ pub(super) fn perform(req: Request) -> Result<Response> {
     loop {
         // This will block if another thread already has the global
         // unlocked already (due to receiving an x-ratelimit-global).
+        println!("before global lock");
         let _ = GLOBAL.lock();
-
+        println!("after global lock");
         // Destructure the tuple instead of retrieving the third value to
         // take advantage of the type system. If `RouteInfo::deconstruct`
         // returns a different number of tuple elements in the future, directly
@@ -141,9 +142,9 @@ pub(super) fn perform(req: Request) -> Result<Response> {
 
         let mut lock = bucket.lock();
         lock.pre_hook(&route);
-
+        println!("gonna actually fire req");
         let response = super::raw::retry(&req)?;
-
+        println!("wow finish fire req");
         // Check if an offset has been calculated yet to determine the time
         // difference from Discord can the client.
         //
@@ -168,6 +169,7 @@ pub(super) fn perform(req: Request) -> Result<Response> {
         // It _may_ be possible for the limit to be raised at any time,
         // so check if it did from the value of the 'x-ratelimit-limit'
         // header. If the limit was 5 and is now 7, add 2 to the 'remaining'
+        println!("this part that part");
         if route == Route::None {
             return Ok(response);
         } else {

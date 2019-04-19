@@ -1658,9 +1658,12 @@ pub fn unpin_message(channel_id: u64, message_id: u64) -> Result<()> {
 ///
 /// [`request`]: fn.request.html
 pub fn fire<T: DeserializeOwned>(req: Request) -> Result<T> {
+    println!("IMA FIRIN MA REQUEST");
     let response = request(req)?;
-
-    serde_json::from_reader(response).map_err(From::from)
+    println!("requested the request");
+    let res = serde_json::from_reader(response).map_err(From::from);
+    println!("finished request");
+    res
 }
 
 /// Performs a request, ratelimiting it if necessary.
@@ -1708,8 +1711,9 @@ pub fn fire<T: DeserializeOwned>(req: Request) -> Result<T> {
 ///
 /// [`fire`]: fn.fire.html
 pub fn request(req: Request) -> Result<HyperResponse> {
+    println!("request method");
     let response = ratelimiting::perform(req)?;
-
+    println!("after ratelimiting");
     if response.status.class() == StatusClass::Success {
         Ok(response)
     } else {
@@ -1722,7 +1726,12 @@ pub(super) fn retry(request: &Request) -> HyperResult<HyperResponse> {
     //
     // If it doesn't and the loop breaks, try one last time.
     for _ in 0..3 {
-        match request.build().send() {
+        println!("inside fn retry");
+        let built = request.build();
+        println!("built");
+        let sent = built.send();
+        println!("sent");
+        match sent {
             Err(HyperError::Io(ref io))
             if io.kind() == IoErrorKind::ConnectionAborted => continue,
             other => return other,

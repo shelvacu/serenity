@@ -342,23 +342,31 @@ impl Client {
 
         let token = token.to_string();
 
+        println!("SA");
         http::set_token(&token);
+        println!("SA after set token");
         let locked = Arc::new(Mutex::new(token));
-
+        println!("SB");
         let name = "serenity client".to_owned();
+        println!("SB - after to owned");
         let threadpool = ThreadPool::with_name(name, 5);
-        let url = Arc::new(Mutex::new(http::get_gateway()?.url));
+        println!("SB - after threadpool with_name");
+        let url_raw = http::get_gateway()?.url;
+        println!("SB - after get_gateway");
+        let url = Arc::new(Mutex::new(url_raw));
+        println!("SBA");
         let data = Arc::new(Mutex::new(ShareMap::custom()));
         let event_handler = Arc::new(handler);
-
+        println!("SBB");
         #[cfg(feature = "framework")]
         let framework = Arc::new(Mutex::new(None));
+        println!("SBC");
         #[cfg(feature = "voice")]
         let voice_manager = Arc::new(Mutex::new(ClientVoiceManager::new(
             0,
             UserId(0),
         )));
-
+        println!("SC");
         let (shard_manager, shard_manager_worker) = {
             ShardManager::new(ShardManagerOptions {
                 data: &data,
@@ -375,7 +383,7 @@ impl Client {
                 ws_url: &url,
             })
         };
-
+        println!("SD");
         Ok(Client {
             token: locked,
             ws_uri: url,
