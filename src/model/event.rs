@@ -61,7 +61,7 @@ impl CacheUpdate for ChannelCreateEvent {
     type Output = Channel;
 
     fn update(&mut self, cache: &mut Cache) -> Option<Self::Output> {
-        cache.insert_channel(self.channel)
+        cache.insert_channel(&self.channel)
     }
 }
 
@@ -297,7 +297,7 @@ impl CacheUpdate for GuildCreateEvent {
     type Output = ();
 
     fn update(&mut self, cache: &mut Cache) -> Option<()> {
-        cache.insert_guild(self.guild);
+        cache.insert_guild(&mut self.guild);
         None
     }
 }
@@ -1007,23 +1007,24 @@ impl CacheUpdate for ReadyEvent {
     fn update(&mut self, cache: &mut Cache) -> Option<()> {
         let mut ready = self.ready.clone();
 
-        for guild in ready.guilds {
+        for guild in &mut ready.guilds {
             match guild {
                 GuildStatus::Offline(unavailable) => {
                     cache.guilds.remove(&unavailable.id);
                     cache.unavailable_guilds.insert(unavailable.id);
                 },
-                GuildStatus::OnlineGuild(guild) => {
+                GuildStatus::OnlineGuild(ref mut guild) => {
                     cache.unavailable_guilds.remove(&guild.id);
                     //cache.guilds.insert(guild.id, Arc::new(RwLock::new(guild)));
-                    cache.insert_guild(&guild);
+                    cache.insert_guild(guild);
                 },
                 GuildStatus::OnlinePartialGuild(_) => {},
             }
         }
 
-        // `ready.private_channels` will always be empty, and possibly be removed in the future.
-        // So don't handle it at all.
+        for (_, channel) in &ready.private_channels {
+            cache.insert_channel(&channel);
+        }
 
         for (user_id, presence) in &mut ready.presences {
             if let Some(ref user) = presence.user {

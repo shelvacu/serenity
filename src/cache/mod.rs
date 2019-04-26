@@ -761,6 +761,7 @@ impl Cache {
     /// If a previous channel existed under the same ID, it is returned,
     /// similar to the behaviour of std::collections::HashMap#insert
     pub fn insert_channel(&mut self, chan: &Channel) -> Option<Channel> {
+        use internal::RwLockExt;
         match chan {
             Channel::Group(ref group) => {
                 let group = Arc::clone(group);
@@ -824,7 +825,8 @@ impl Cache {
     /// TODO: write docs
     /// !!! this mutates the guild !!! (why?)
     pub fn insert_guild(&mut self, guild: &mut Guild) {
-        self.unavailable_guilds.remove(guild.id);
+        //use internal::RwLockExt;
+        self.unavailable_guilds.remove(&guild.id);
 
         let mut guild = guild.clone();
 
@@ -835,14 +837,15 @@ impl Cache {
             member.user = Arc::clone(&user);
         }
 
-        for (chan_id, guild_channel) in &guild.channels {
-            self.insert_channel(Channel::GuildChannel(guild_channel))
+        for (_chan_id, guild_channel) in &guild.channels {
+            let gcc = Arc::clone(guild_channel);
+            self.insert_channel(&Channel::Guild(gcc));
         }
 
         self.channels.extend(guild.channels.clone());
         self
             .guilds
-            .insert(self.guild.id, Arc::new(RwLock::new(guild)));
+            .insert(guild.id, Arc::new(RwLock::new(guild)));
     }
 
 
