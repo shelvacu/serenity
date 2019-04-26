@@ -46,7 +46,8 @@ macro_rules! update {
                                 $event,
                             );
                             None
-                        }},
+                        }
+                    },
                     None => {
                         CACHE.write().update(&mut $event)
                     },

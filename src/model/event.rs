@@ -61,64 +61,7 @@ impl CacheUpdate for ChannelCreateEvent {
     type Output = Channel;
 
     fn update(&mut self, cache: &mut Cache) -> Option<Self::Output> {
-        match self.channel {
-            Channel::Group(ref group) => {
-                let group = Arc::clone(group);
-
-                let channel_id = group.with_mut(|writer| {
-                    for (recipient_id, recipient) in &mut writer.recipients {
-                        cache.update_user_entry(&recipient.read());
-
-                        *recipient = Arc::clone(&cache.users[recipient_id]);
-                    }
-
-                    writer.channel_id
-                });
-
-                let ch = cache.groups.insert(channel_id, group);
-
-                ch.map(Channel::Group)
-            },
-            Channel::Guild(ref channel) => {
-                let (guild_id, channel_id) = channel.with(|channel| (channel.guild_id, channel.id));
-
-                cache.channels.insert(channel_id, Arc::clone(channel));
-
-                cache
-                    .guilds
-                    .get_mut(&guild_id)
-                    .and_then(|guild| {
-                        guild
-                            .with_mut(|guild| guild.channels.insert(channel_id, Arc::clone(channel)))
-                    })
-                    .map(Channel::Guild)
-            },
-            Channel::Private(ref channel) => {
-                if let Some(channel) = cache.private_channels.get(&channel.with(|c| c.id)) {
-                    return Some(Channel::Private(Arc::clone(&(*channel))));
-                }
-
-                let channel = Arc::clone(channel);
-
-                let id = channel.with_mut(|writer| {
-                    let user_id = writer.recipient.with_mut(|user| {
-                        cache.update_user_entry(user);
-
-                        user.id
-                    });
-
-                    writer.recipient = Arc::clone(&cache.users[&user_id]);
-                    writer.id
-                });
-
-                let ch = cache.private_channels.insert(id, Arc::clone(&channel));
-                ch.map(Channel::Private)
-            },
-            Channel::Category(ref category) => cache
-                .categories
-                .insert(category.read().id, Arc::clone(category))
-                .map(Channel::Category),
-        }
+        cache.insert_channel(self.channel)
     }
 }
 
@@ -354,22 +297,7 @@ impl CacheUpdate for GuildCreateEvent {
     type Output = ();
 
     fn update(&mut self, cache: &mut Cache) -> Option<()> {
-        cache.unavailable_guilds.remove(&self.guild.id);
-
-        let mut guild = self.guild.clone();
-
-        for (user_id, member) in &mut guild.members {
-            cache.update_user_entry(&member.user.read());
-            let user = Arc::clone(&cache.users[user_id]);
-
-            member.user = Arc::clone(&user);
-        }
-
-        cache.channels.extend(guild.channels.clone());
-        cache
-            .guilds
-            .insert(self.guild.id, Arc::new(RwLock::new(guild)));
-
+        cache.insert_guild(self.guild);
         None
     }
 }
@@ -513,7 +441,7 @@ impl CacheUpdate for GuildMemberRemoveEvent {
     fn update(&mut self, cache: &mut Cache) -> Option<Self::Output> {
         cache.guilds.get_mut(&self.guild_id).and_then(|guild| {
             guild.with_mut(|guild| {
-                guild.member_count -= 1;
+                guild.member_count -= 1; //TODO: Make idempotent (discord docs say events may be sent multiples times!)
                 guild.members.remove(&self.user.id)
             })
         })
@@ -1087,7 +1015,8 @@ impl CacheUpdate for ReadyEvent {
                 },
                 GuildStatus::OnlineGuild(guild) => {
                     cache.unavailable_guilds.remove(&guild.id);
-                    cache.guilds.insert(guild.id, Arc::new(RwLock::new(guild)));
+                    //cache.guilds.insert(guild.id, Arc::new(RwLock::new(guild)));
+                    cache.insert_guild(&guild);
                 },
                 GuildStatus::OnlinePartialGuild(_) => {},
             }

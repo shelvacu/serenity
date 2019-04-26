@@ -338,13 +338,7 @@ impl Client {
     /// ```
     pub fn new<H>(token: &str, handler: H) -> Result<Self>
         where H: EventHandler + Send + Sync + 'static {
-        let token = token.trim();
-
-        let token = if token.starts_with("Bot ") {
-            token.to_string()
-        } else {
-            format!("Bot {}", token)
-        };
+        let token = token.trim().to_string();
 
         http::set_token(&token);
         let locked = Arc::new(Mutex::new(token));

@@ -757,6 +757,95 @@ impl Cache {
         e.update(self)
     }
 
+    /// Writes the channel data to the cache
+    /// If a previous channel existed under the same ID, it is returned,
+    /// similar to the behaviour of std::collections::HashMap#insert
+    pub fn insert_channel(&mut self, chan: &Channel) -> Option<Channel> {
+        match chan {
+            Channel::Group(ref group) => {
+                let group = Arc::clone(group);
+
+                let channel_id = group.with_mut(|writer| {
+                    for (recipient_id, recipient) in &mut writer.recipients {
+                        self.update_user_entry(&recipient.read());
+
+                        *recipient = Arc::clone(&self.users[recipient_id]);
+                    }
+
+                    writer.channel_id
+                });
+
+                let ch = self.groups.insert(channel_id, group);
+
+                ch.map(Channel::Group)
+            },
+            Channel::Guild(ref channel) => {
+                let (guild_id, channel_id) = channel.with(|channel| (channel.guild_id, channel.id));
+
+                self.channels.insert(channel_id, Arc::clone(channel));
+
+                self
+                    .guilds
+                    .get_mut(&guild_id)
+                    .and_then(|guild| {
+                        guild
+                            .with_mut(|guild| guild.channels.insert(channel_id, Arc::clone(channel)))
+                    })
+                    .map(Channel::Guild)
+            },
+            Channel::Private(ref channel) => {
+                if let Some(channel) = self.private_channels.get(&channel.with(|c| c.id)) {
+                    return Some(Channel::Private(Arc::clone(&(*channel))));
+                }
+
+                let channel = Arc::clone(channel);
+
+                let id = channel.with_mut(|writer| {
+                    let user_id = writer.recipient.with_mut(|user| {
+                        self.update_user_entry(user);
+
+                        user.id
+                    });
+
+                    writer.recipient = Arc::clone(&self.users[&user_id]);
+                    writer.id
+                });
+
+                let ch = self.private_channels.insert(id, Arc::clone(&channel));
+                ch.map(Channel::Private)
+            },
+            Channel::Category(ref category) => self
+                .categories
+                .insert(category.read().id, Arc::clone(category))
+                .map(Channel::Category),
+        }
+    }
+
+    /// TODO: write docs
+    /// !!! this mutates the guild !!! (why?)
+    pub fn insert_guild(&mut self, guild: &mut Guild) {
+        self.unavailable_guilds.remove(guild.id);
+
+        let mut guild = guild.clone();
+
+        for (user_id, member) in &mut guild.members {
+            self.update_user_entry(&member.user.read());
+            let user = Arc::clone(&self.users[user_id]);
+
+            member.user = Arc::clone(&user);
+        }
+
+        for (chan_id, guild_channel) in &guild.channels {
+            self.insert_channel(Channel::GuildChannel(guild_channel))
+        }
+
+        self.channels.extend(guild.channels.clone());
+        self
+            .guilds
+            .insert(self.guild.id, Arc::new(RwLock::new(guild)));
+    }
+
+
     /// Gets the duration it will try for when acquiring a write lock.
     ///
     /// Refer to the documentation for [`cache_lock_time`] for more information.
