@@ -45,7 +45,7 @@ pub struct Context {
     pub shard: ShardMessenger,
     /// The ID of the shard this context is related to.
     pub shard_id: u64,
-    /// The raw data of the websocket packet that triggered this (if "ws-raw-event" is enabled).
+    /// The raw data of the websocket packet that triggered this (if "raw-ws-event" is enabled).
     pub raw_event: Option<RawEvent>,
 }
 

@@ -180,7 +180,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::Raw) => {
-            #[cfg(feature = "ws-raw-event")]
+            #[cfg(feature = "raw-ws-event")]
             {
                 let context = context(data, runner_tx, shard_id, raw_event.clone());
                 let event_handler = Arc::clone(event_handler);

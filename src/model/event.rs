@@ -93,8 +93,6 @@ impl CacheUpdate for ChannelDeleteEvent {
             Channel::Guild(ref channel) => {
                 let (guild_id, channel_id) = channel.with(|channel| (channel.guild_id, channel.id));
 
-                cache.channels.remove(&channel_id);
-
                 cache
                     .guilds
                     .get_mut(&guild_id)
@@ -105,9 +103,11 @@ impl CacheUpdate for ChannelDeleteEvent {
 
                 cache.categories.remove(&channel_id);
             },
-            // We ignore these because the delete event does not fire for these.
-            Channel::Private(_) | Channel::Group(_) => unreachable!(),
+            // These are only relevant if this is a selfbot.
+            Channel::Private(_) | Channel::Group(_) => (),
         };
+
+        cache.channels.remove(&self.channel.id());
 
         // Remove the cached messages for the channel.
         cache.messages.remove(&self.channel.id());
