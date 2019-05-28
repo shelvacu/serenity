@@ -8,7 +8,7 @@ license = "ISC"
 name = "serenity"
 readme = "README.md"
 repository = "https://github.com/serenity-rs/serenity.git"
-version = "0.5.14"
+version = "0.5.14-shel1"
 
 [dependencies]
 bitflags = "^1.0"
@@ -113,6 +113,7 @@ standard_framework = ["framework"]
 utils = ["base64"]
 voice = ["byteorder", "gateway", "opus", "sodiumoxide"]
 websocket = ["evzht9h3nznqzwl"]
+raw-ws-event = ["websocket"]
 
 [package.metadata.docs.rs]
 all-features = true

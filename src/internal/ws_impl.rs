@@ -1,5 +1,6 @@
 use flate2::read::ZlibDecoder;
 use gateway::GatewayError;
+use model::event::RawEvent;
 use internal::prelude::*;
 use serde_json;
 use websocket::{
@@ -9,7 +10,7 @@ use websocket::{
 };
 
 pub trait ReceiverExt {
-    fn recv_json(&mut self) -> Result<Option<Value>>;
+    fn recv_json(&mut self) -> Result<(RawEvent, Result<Option<Value>>)>;
 }
 
 pub trait SenderExt {
@@ -17,16 +18,30 @@ pub trait SenderExt {
 }
 
 impl ReceiverExt for WsClient<TlsStream<TcpStream>> {
-    fn recv_json(&mut self) -> Result<Option<Value>> {
-        Ok(match self.recv_message()? {
+    fn recv_json(&mut self) -> Result<(RawEvent, Result<Option<Value>>)> {
+        let owned_msg = self.recv_message()?;
+        #[cfg(feature = "raw-ws-event")]
+        let happened_at_instant = std::time::Instant::now();
+        #[cfg(feature = "raw-ws-event")]
+        let happened_at_chrono = ::chrono::Local::now();
+        #[cfg(feature = "raw-ws-event")]
+        let raw_event = RawEvent {
+            happened_at_chrono,
+            happened_at_instant,
+            data: owned_msg.clone(),
+        };
+        #[cfg(not(feature = "raw-ws-event"))]
+        let raw_event = RawEvent;
+        
+        let res_2:Result<_> = match owned_msg {
             OwnedMessage::Binary(bytes) => {
                 serde_json::from_reader(ZlibDecoder::new(&bytes[..]))
                     .map(Some)
                     .map_err(|why| {
                         warn!("Err deserializing bytes: {:?}; bytes: {:?}", why, bytes);
 
-                        why
-                    })?
+                        Error::from(why)
+                    })
             },
             OwnedMessage::Close(data) => return Err(Error::Gateway(GatewayError::Closed(data))),
             OwnedMessage::Text(payload) => {
@@ -37,17 +52,18 @@ impl ReceiverExt for WsClient<TlsStream<TcpStream>> {
                         payload,
                     );
 
-                    why
-                })?
+                    Error::from(why)
+                })
             },
             OwnedMessage::Ping(x) => {
-                self.send_message(&OwnedMessage::Pong(x))
-                    .map_err(Error::from)?;
-
-                None
+                match self.send_message(&OwnedMessage::Pong(x)) {
+                    Ok(_) => Ok(None),
+                    Err(v) => Err(Error::from(v)),
+                }
             },
-            OwnedMessage::Pong(_) => None,
-        })
+            OwnedMessage::Pong(_) => Ok(None),
+        };
+        return Ok((raw_event, res_2));
     }
 }
 

@@ -1177,7 +1177,7 @@ impl Framework for StandardFramework {
 
                         if let Some(help) = help {
                             let groups = self.groups.clone();
-                            let mut args = command_and_help_args!(&message.content, position, command_length, &self.configuration.delimiters);
+                            let args = command_and_help_args!(&message.content, position, command_length, &self.configuration.delimiters);
 
                             threadpool.execute(move || {
 

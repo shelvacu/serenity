@@ -1,7 +1,7 @@
 use gateway::InterMessage;
 use model::{
     channel::{Channel, Message},
-    event::Event,
+    event::{Event, RawEvent},
     guild::Member,
 };
 use std::sync::Arc;
@@ -61,8 +61,9 @@ fn context(
     data: &Arc<Mutex<ShareMap>>,
     runner_tx: &Sender<InterMessage>,
     shard_id: u64,
+    raw_event: Option<RawEvent>,
 ) -> Context {
-    Context::new(Arc::clone(data), runner_tx.clone(), shard_id)
+    Context::new(Arc::clone(data), runner_tx.clone(), shard_id, raw_event)
 }
 
 pub(crate) enum DispatchEvent {
@@ -74,6 +75,7 @@ pub(crate) enum DispatchEvent {
 #[cfg_attr(feature = "cargo-clippy", allow(too_many_arguments))]
 pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static>(
     event: DispatchEvent,
+    raw_event: Option<RawEvent>,
     framework: &Arc<Mutex<Option<Box<Framework + Send>>>>,
     data: &Arc<Mutex<ShareMap>>,
     event_handler: &Arc<H>,
@@ -85,7 +87,7 @@ pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::MessageCreate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             dispatch_message(
                 context.clone(),
                 event.message.clone(),
@@ -99,6 +101,7 @@ pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static>(
         },
         other => handle_event(
             other,
+            raw_event,
             data,
             event_handler,
             runner_tx,
@@ -112,6 +115,7 @@ pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static>(
 #[allow(unused_mut)]
 pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static>(
     event: DispatchEvent,
+    raw_event: Option<RawEvent>,
     data: &Arc<Mutex<ShareMap>>,
     event_handler: &Arc<H>,
     runner_tx: &Sender<InterMessage>,
@@ -122,11 +126,12 @@ pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::MessageCreate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             dispatch_message(context, event.message, event_handler, threadpool);
         },
         other => handle_event(
             other,
+            raw_event,
             data,
             event_handler,
             runner_tx,
@@ -158,6 +163,7 @@ fn dispatch_message<H>(
 #[allow(cyclomatic_complexity, unused_assignments, unused_mut)]
 fn handle_event<H: EventHandler + Send + Sync + 'static>(
     event: DispatchEvent,
+    raw_event: Option<RawEvent>,
     data: &Arc<Mutex<ShareMap>>,
     event_handler: &Arc<H>,
     runner_tx: &Sender<InterMessage>,
@@ -166,17 +172,29 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
 ) {
     match event {
         DispatchEvent::Client(ClientEvent::ShardStageUpdate(event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
                 event_handler.shard_stage_update(context, event);
             });
-        }
+        },
+        DispatchEvent::Model(Event::Raw) => {
+            #[cfg(feature = "ws-raw-event")]
+            {
+                let context = context(data, runner_tx, shard_id, raw_event.clone());
+                let event_handler = Arc::clone(event_handler);
+                let threads_raw_event = raw_event.unwrap();
+
+                threadpool.execute(move || {
+                    event_handler.raw_websocket_packet(context, threads_raw_event);
+                });
+            }
+        },
         DispatchEvent::Model(Event::ChannelCreate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
 
             // Discord sends both a MessageCreate and a ChannelCreate upon a new message in a private channel.
             // This could potentially be annoying to handle when otherwise wanting to normally take care of a new channel.
@@ -209,7 +227,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::ChannelDelete(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
 
             match event.channel {
                 Channel::Private(_) | Channel::Group(_) => {},
@@ -230,7 +248,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             }
         },
         DispatchEvent::Model(Event::ChannelPinsUpdate(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -240,7 +258,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::ChannelRecipientAdd(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
 
             let event_handler = Arc::clone(event_handler);
 
@@ -255,7 +273,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::ChannelRecipientRemove(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -269,7 +287,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::ChannelUpdate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -283,7 +301,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::GuildBanAdd(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -291,7 +309,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::GuildBanRemove(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -313,7 +331,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
                 let cache = CACHE.read();
 
                 if cache.unavailable_guilds.is_empty() {
-                    let context = context(data, runner_tx, shard_id);
+                    let context = context(data, runner_tx, shard_id, raw_event.clone());
 
                     let guild_amount = cache
                         .guilds
@@ -328,7 +346,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
                 }
             }
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -341,7 +359,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         },
         DispatchEvent::Model(Event::GuildDelete(mut event)) => {
             let _full = update!(event);
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -355,7 +373,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::GuildEmojisUpdate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -363,7 +381,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::GuildIntegrationsUpdate(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -373,7 +391,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::GuildMemberAdd(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -382,7 +400,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         },
         DispatchEvent::Model(Event::GuildMemberRemove(mut event)) => {
             let _member = update!(event);
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -402,7 +420,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
                 None
             }};
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -418,7 +436,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::GuildMembersChunk(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -428,7 +446,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::GuildRoleCreate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -437,7 +455,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         },
         DispatchEvent::Model(Event::GuildRoleDelete(mut event)) => {
             let _role = update!(event);
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -450,7 +468,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         },
         DispatchEvent::Model(Event::GuildRoleUpdate(mut event)) => {
             let _before = update!(event);
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -464,7 +482,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::GuildUnavailable(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -474,7 +492,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::GuildUpdate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -491,9 +509,9 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         // Already handled by the framework check macro
-        DispatchEvent::Model(Event::MessageCreate(_)) => {},
+        DispatchEvent::Model(Event::MessageCreate(_)) => { unreachable!() },
         DispatchEvent::Model(Event::MessageDeleteBulk(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -501,7 +519,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::MessageDelete(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -511,7 +529,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::MessageUpdate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -521,7 +539,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::PresencesReplace(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -531,7 +549,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::PresenceUpdate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -539,7 +557,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::ReactionAdd(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -547,7 +565,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::ReactionRemove(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -555,7 +573,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::ReactionRemoveAll(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -565,7 +583,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::Ready(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(&event_handler);
 
             threadpool.execute(move || {
@@ -573,12 +591,12 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::Resumed(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
 
             event_handler.resume(context, event);
         },
         DispatchEvent::Model(Event::TypingStart(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -586,7 +604,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::Unknown(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -595,7 +613,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         },
         DispatchEvent::Model(Event::UserUpdate(mut event)) => {
             let _before = update!(event);
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -607,7 +625,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::VoiceServerUpdate(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -617,7 +635,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
         DispatchEvent::Model(Event::VoiceStateUpdate(mut event)) => {
             update!(event);
 
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -625,7 +643,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::WebhookUpdate(mut event)) => {
-            let context = context(data, runner_tx, shard_id);
+            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {

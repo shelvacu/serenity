@@ -1,7 +1,7 @@
 use gateway::{InterMessage, ReconnectType, Shard, ShardAction};
 use internal::prelude::*;
 use internal::ws_impl::{ReceiverExt, SenderExt};
-use model::event::{Event, GatewayEvent};
+use model::event::{Event, GatewayEvent, RawEvent};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::sync::{
@@ -113,7 +113,7 @@ impl<H: EventHandler + Send + Sync + 'static> ShardRunner<H> {
             }
 
             let pre = self.shard.stage();
-            let (event, action, successful) = self.recv_event();
+            let (raw_event, event, action, successful) = self.recv_event();
             let post = self.shard.stage();
 
             if post != pre {
@@ -124,7 +124,7 @@ impl<H: EventHandler + Send + Sync + 'static> ShardRunner<H> {
                     old: pre,
                     shard_id: ShardId(self.shard.shard_info()[0]),
                 });
-                self.dispatch(DispatchEvent::Client(e));
+                self.dispatch(raw_event.clone(), DispatchEvent::Client(e));
             }
 
             match action {
@@ -137,8 +137,18 @@ impl<H: EventHandler + Send + Sync + 'static> ShardRunner<H> {
                 None => {},
             }
 
+            #[cfg(feature = "raw-ws-event")]
+            {
+                if raw_event.is_some() {
+                    self.dispatch(
+                        raw_event.clone(),
+                        DispatchEvent::Model(Event::Raw)
+                    );
+                }
+            }
+            
             if let Some(event) = event {
-                self.dispatch(DispatchEvent::Model(event));
+                self.dispatch(raw_event, DispatchEvent::Model(event));
             }
 
             if !successful && !self.shard.stage().is_connecting() {
@@ -198,9 +208,10 @@ impl<H: EventHandler + Send + Sync + 'static> ShardRunner<H> {
     }
 
     #[inline]
-    fn dispatch(&self, event: DispatchEvent) {
+    fn dispatch(&self, raw_event: Option<RawEvent>, event: DispatchEvent) {
         dispatch(
             event,
+            raw_event,
             #[cfg(feature = "framework")]
             &self.framework,
             &self.data,
@@ -365,12 +376,9 @@ impl<H: EventHandler + Send + Sync + 'static> ShardRunner<H> {
 
     /// Returns a received event, as well as whether reading the potentially
     /// present event was successful.
-    fn recv_event(&mut self) -> (Option<Event>, Option<ShardAction>, bool) {
-        let gw_event = match self.shard.client.recv_json() {
-            Ok(Some(value)) => {
-                GatewayEvent::deserialize(value).map(Some).map_err(From::from)
-            },
-            Ok(None) => Ok(None),
+    fn recv_event(&mut self) -> (Option<RawEvent>, Option<Event>, Option<ShardAction>, bool) {
+        let (raw_event, parsed_event) = match self.shard.client.recv_json() {
+            Ok(res) => res,
             Err(Error::WebSocket(WebSocketError::IoError(_))) => {
                 // Check that an amount of time at least double the
                 // heartbeat_interval has passed.
@@ -387,39 +395,52 @@ impl<H: EventHandler + Send + Sync + 'static> ShardRunner<H> {
                         let interval_in_secs = interval / 1000;
 
                         if seconds_passed <= interval_in_secs * 2 {
-                            return (None, None, true);
+                            return (None, None, None, true);
                         }
                     } else {
-                        return (None, None, true);
+                        return (None, None, None, true);
                     }
                 }
 
                 debug!("Attempting to auto-reconnect");
 
                 match self.shard.reconnection_type() {
-                    ReconnectType::Reidentify => return (None, None, false),
+                    ReconnectType::Reidentify => return (None, None, None, false),
                     ReconnectType::Resume => {
                         if let Err(why) = self.shard.resume() {
                             warn!("Failed to resume: {:?}", why);
 
-                            return (None, None, false);
+                            return (None, None, None, false);
                         }
                     },
                 }
 
-                return (None, None, true);
+                return (None, None, None, true);
             },
             Err(Error::WebSocket(WebSocketError::NoDataAvailable)) => {
                 // This is hit when the websocket client dies this will be
                 // hit every iteration.
-                return (None, None, false);
+                return (None, None, None, false);
             },
+            Err(why) => {
+                error!("Shard handler received err: {:?}", why);
+
+                return (None, None, None, false);
+            },
+        };
+        
+        let gw_event = match parsed_event {
+            Ok(Some(value)) => {
+                GatewayEvent::deserialize(value).map(Some).map_err(From::from)
+            },
+            Ok(None) => Ok(None),
+
             Err(why) => Err(why),
         };
 
         let event = match gw_event {
             Ok(Some(event)) => Ok(event),
-            Ok(None) => return (None, None, true),
+            Ok(None) => return (Some(raw_event), None, None, true),
             Err(why) => Err(why),
         };
 
@@ -429,7 +450,7 @@ impl<H: EventHandler + Send + Sync + 'static> ShardRunner<H> {
             Err(why) => {
                 error!("Shard handler received err: {:?}", why);
 
-                return (None, None, true);
+                return (Some(raw_event), None, None, true);
             },
         };
 
@@ -449,7 +470,7 @@ impl<H: EventHandler + Send + Sync + 'static> ShardRunner<H> {
             _ => None,
         };
 
-        (event, action, true)
+        (Some(raw_event), event, action, true)
     }
 
     fn request_restart(&self) -> Result<()> {

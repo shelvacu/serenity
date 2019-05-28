@@ -45,6 +45,8 @@ pub struct Context {
     pub shard: ShardMessenger,
     /// The ID of the shard this context is related to.
     pub shard_id: u64,
+    /// The raw data of the websocket packet that triggered this (if "ws-raw-event" is enabled).
+    pub raw_event: Option<RawEvent>,
 }
 
 impl Context {
@@ -53,11 +55,13 @@ impl Context {
         data: Arc<Mutex<ShareMap>>,
         runner_tx: Sender<InterMessage>,
         shard_id: u64,
+        raw_event: Option<RawEvent>,
     ) -> Context {
         Context {
             shard: ShardMessenger::new(runner_tx),
             shard_id,
             data,
+            raw_event,
         }
     }
 

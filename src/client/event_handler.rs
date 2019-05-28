@@ -16,6 +16,12 @@ pub trait EventHandler {
     #[cfg(feature = "cache")]
     fn cached(&self, _ctx: Context, _guilds: Vec<GuildId>) {}
 
+    /// Dispatched any time a websocket packet is received.
+    ///
+    /// Provides the raw contents of the websocket packet (may be compressed).
+    #[cfg(feature = "ws-raw-event")]
+    fn raw_websocket_packet(&self, _ctx: Context, _packet: RawEvent) {}
+
     /// Dispatched when a channel is created.
     ///
     /// Provides said channel's data.

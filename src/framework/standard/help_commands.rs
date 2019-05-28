@@ -557,7 +557,7 @@ pub fn create_customised_help_data<'a, H: BuildHasher>(
                             .map_or(false, |v| v.iter().any(|prefix|
                             *prefix == searched_named_lowercase)) {
 
-                        let mut single_group = create_single_group(
+                        let single_group = create_single_group(
                             &group,
                             &key,
                             &msg,

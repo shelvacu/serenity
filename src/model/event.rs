@@ -22,6 +22,20 @@ use internal::RwLockExt;
 use std::collections::hash_map::Entry;
 #[cfg(feature = "cache")]
 use std::mem;
+#[cfg(feature = "raw-ws-event")]
+use websocket::OwnedMessage;
+
+#[cfg(feature = "raw-ws-event")]
+#[derive(Clone, Debug)]
+pub struct RawEvent {
+    pub happened_at_chrono: ::chrono::DateTime<::chrono::Local>,
+    pub happened_at_instant: std::time::Instant,
+    pub data: OwnedMessage,
+}
+
+#[cfg(not(feature = "raw-ws-event"))]
+#[derive(Clone, Debug)]
+pub struct RawEvent;
 
 /// Event data for the channel creation event.
 ///
@@ -1260,6 +1274,11 @@ impl<'de> Deserialize<'de> for GatewayEvent {
 #[allow(large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Event {
+    /// A websocket packet was received succesfully.
+    ///
+    /// Event triggered after receipt of every websocket packet,
+    /// if feature "raw-ws-event" is enabled. Use Context to get the actual data.
+    Raw,
     /// A [`Channel`] was created.
     ///
     /// Fires the [`Client::channel_create`] event.
