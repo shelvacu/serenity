@@ -23,7 +23,7 @@ impl ReceiverExt for WsClient<TlsStream<TcpStream>> {
         #[cfg(feature = "raw-ws-event")]
         let happened_at_instant = std::time::Instant::now();
         #[cfg(feature = "raw-ws-event")]
-        let happened_at_chrono = ::chrono::Local::now();
+        let happened_at_chrono = ::chrono::Utc::now();
         #[cfg(feature = "raw-ws-event")]
         let raw_event = RawEvent {
             happened_at_chrono,

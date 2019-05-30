@@ -28,7 +28,7 @@ use websocket::OwnedMessage;
 #[cfg(feature = "raw-ws-event")]
 #[derive(Clone, Debug)]
 pub struct RawEvent {
-    pub happened_at_chrono: ::chrono::DateTime<::chrono::Local>,
+    pub happened_at_chrono: ::chrono::DateTime<::chrono::Utc>,
     pub happened_at_instant: std::time::Instant,
     pub data: OwnedMessage,
 }
