@@ -188,6 +188,9 @@ pub use error::{Error, Result};
 #[cfg(feature = "client")]
 pub use client::Client;
 
+#[cfg(feature = "raw-ws-event")]
+pub use websocket::message::OwnedMessage;
+
 #[cfg(feature = "cache")]
 use cache::Cache;
 #[cfg(feature = "cache")]
