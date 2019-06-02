@@ -285,6 +285,9 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::ChannelUpdate(mut event)) => {
+            #[cfg(feature = "cache")]
+            let before = CACHE.read().channel(event.channel.id());
+
             update!(event);
 
             let context = context(data, runner_tx, shard_id, raw_event);
@@ -292,8 +295,6 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
 
             threadpool.execute(move || {
                 feature_cache! {{
-                    let before = CACHE.read().channel(event.channel.id());
-
                     event_handler.channel_update(context, before, event.channel);
                 } else {
                     event_handler.channel_update(context, event.channel);
@@ -490,6 +491,12 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             });
         },
         DispatchEvent::Model(Event::GuildUpdate(mut event)) => {
+            #[cfg(feature = "cache")]
+            let before = CACHE.read()
+                .guilds
+                .get(&event.guild.id)
+                .cloned();
+
             update!(event);
 
             let context = context(data, runner_tx, shard_id, raw_event);
@@ -497,11 +504,6 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
 
             threadpool.execute(move || {
                 feature_cache! {{
-                    let before = CACHE.read()
-                        .guilds
-                        .get(&event.guild.id)
-                        .cloned();
-
                     event_handler.guild_update(context, before, event.guild);
                 } else {
                     event_handler.guild_update(context, event.guild);
