@@ -247,6 +247,7 @@ impl Message {
 
     pub(crate) fn transform_content(&mut self) {
         match self.kind {
+            //TODO: One uses author.mention, the others use just author
             MessageType::PinsAdd => {
                 self.content = format!(
                     "{} pinned a message to this channel. See all the pins.",
@@ -263,6 +264,13 @@ impl Message {
                     chosen.to_string()
                 };
             },
+            MessageType::UserPremiumGuildSubscription => {
+                self.content = format!(
+                    "{} just boosted the server!",
+                    self.author
+                );
+            },
+            //TODO: tier 1-3?
             _ => {},
         }
     }
@@ -673,6 +681,12 @@ pub enum MessageType {
     PinsAdd = 6,
     /// An indicator that a member joined the guild.
     MemberJoin = 7,
+    /// An indicator that a member boosted the server.
+    UserPremiumGuildSubscription = 8,
+    /// ????
+    UserPremiumGuildSubscriptionTier1 = 9,
+    UserPremiumGuildSubscriptionTier2 = 10,
+    UserPremiumGuildSubscriptionTier3 = 11,
 }
 
 enum_number!(
@@ -685,6 +699,10 @@ enum_number!(
         GroupIconUpdate,
         PinsAdd,
         MemberJoin,
+        UserPremiumGuildSubscription,
+        UserPremiumGuildSubscriptionTier1,
+        UserPremiumGuildSubscriptionTier2,
+        UserPremiumGuildSubscriptionTier3,
     }
 );
 
@@ -701,6 +719,10 @@ impl MessageType {
             GroupIconUpdate => 5,
             PinsAdd => 6,
             MemberJoin => 7,
+            UserPremiumGuildSubscription => 8,
+            UserPremiumGuildSubscriptionTier1 => 9,
+            UserPremiumGuildSubscriptionTier2 => 10,
+            UserPremiumGuildSubscriptionTier3 => 11,
         }
     }
 }
