@@ -441,12 +441,6 @@ impl<H: EventHandler + Send + Sync + 'static,
 
                 return (None, None, None, true);
             },
-<<<<<<< HEAD
-            Err(Error::WebSocket(WebSocketError::NoDataAvailable)) => {
-                // This is hit when the websocket client dies this will be
-                // hit every iteration.
-                return (None, None, None, false);
-            },
             Err(why) => {
                 error!("Shard handler received err: {:?}", why);
 
@@ -459,9 +453,6 @@ impl<H: EventHandler + Send + Sync + 'static,
                 GatewayEvent::deserialize(value).map(Some).map_err(From::from)
             },
             Ok(None) => Ok(None),
-
-=======
->>>>>>> 595afbc24a4b742ac8e7ce6d179569d746e434e4
             Err(why) => Err(why),
         };
 
