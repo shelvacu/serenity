@@ -1,6 +1,8 @@
-use gateway::InterMessage;
-use internal::prelude::*;
+use crate::gateway::InterMessage;
+use crate::internal::prelude::*;
+use crate::CacheAndHttp;
 use parking_lot::Mutex;
+use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
@@ -9,7 +11,7 @@ use std::{
     },
     thread
 };
-use super::super::super::EventHandler;
+use super::super::super::{EventHandler, RawEventHandler};
 use super::{
     ShardClientMessage,
     ShardId,
@@ -21,11 +23,12 @@ use super::{
 };
 use threadpool::ThreadPool;
 use typemap::ShareMap;
+use log::{info, warn};
 
 #[cfg(feature = "framework")]
-use framework::Framework;
+use crate::framework::Framework;
 #[cfg(feature = "voice")]
-use client::bridge::voice::ClientVoiceManager;
+use crate::client::bridge::voice::ClientVoiceManager;
 
 /// A manager for handling the status of shards by starting them, restarting
 /// them, and stopping them when required.
@@ -39,25 +42,25 @@ use client::bridge::voice::ClientVoiceManager;
 /// 2, of 5 total shards:
 ///
 /// ```rust,no_run
-/// extern crate parking_lot;
-/// extern crate serenity;
-/// extern crate threadpool;
-/// extern crate typemap;
-///
 /// # use std::error::Error;
 /// #
 /// # #[cfg(feature = "voice")]
 /// # use serenity::client::bridge::voice::ClientVoiceManager;
 /// # #[cfg(feature = "voice")]
 /// # use serenity::model::id::UserId;
+/// # #[cfg(feature = "cache")]
+/// # use serenity::cache::Cache;
 /// #
 /// # #[cfg(feature = "framework")]
 /// # fn try_main() -> Result<(), Box<Error>> {
 /// #
-/// use parking_lot::Mutex;
+/// use parking_lot::{Mutex, RwLock};
 /// use serenity::client::bridge::gateway::{ShardManager, ShardManagerOptions};
-/// use serenity::client::EventHandler;
-/// use serenity::http;
+/// use serenity::client::{EventHandler, RawEventHandler};
+/// // Of note, this imports `typemap`'s `ShareMap` type.
+/// use serenity::prelude::*;
+/// use serenity::http::Http;
+/// use serenity::CacheAndHttp;
 /// // Of note, this imports `typemap`'s `ShareMap` type.
 /// use serenity::prelude::*;
 /// use std::sync::Arc;
@@ -67,20 +70,20 @@ use client::bridge::voice::ClientVoiceManager;
 /// struct Handler;
 ///
 /// impl EventHandler for Handler { }
+/// impl RawEventHandler for Handler { }
 ///
-/// let token = env::var("DISCORD_TOKEN")?;
-/// http::set_token(&token);
-/// let token = Arc::new(Mutex::new(token));
-///
-/// let gateway_url = Arc::new(Mutex::new(http::get_gateway()?.url));
-/// let data = Arc::new(Mutex::new(ShareMap::custom()));
+/// # let cache_and_http = Arc::new(CacheAndHttp::default());
+/// # let http = &cache_and_http.http;
+/// let gateway_url = Arc::new(Mutex::new(http.get_gateway()?.url));
+/// let data = Arc::new(RwLock::new(ShareMap::custom()));
 /// let event_handler = Arc::new(Handler);
 /// let framework = Arc::new(Mutex::new(None));
 /// let threadpool = ThreadPool::with_name("my threadpool".to_owned(), 5);
 ///
 /// ShardManager::new(ShardManagerOptions {
 ///     data: &data,
-///     event_handler: &event_handler,
+///     event_handler: &Some(event_handler),
+///     raw_event_handler: &None::<Arc<Handler>>,
 ///     framework: &framework,
 ///     // the shard index to start initiating from
 ///     shard_index: 0,
@@ -88,11 +91,11 @@ use client::bridge::voice::ClientVoiceManager;
 ///     shard_init: 3,
 ///     // the total number of shards in use
 ///     shard_total: 5,
-///     token: &token,
 ///     threadpool,
 ///     # #[cfg(feature = "voice")]
 ///     # voice_manager: &Arc::new(Mutex::new(ClientVoiceManager::new(0, UserId(0)))),
 ///     ws_url: &gateway_url,
+///     # cache_and_http: &cache_and_http,
 /// });
 /// #     Ok(())
 /// # }
@@ -129,9 +132,11 @@ pub struct ShardManager {
 impl ShardManager {
     /// Creates a new shard manager, returning both the manager and a monitor
     /// for usage in a separate thread.
-    pub fn new<H>(
-        opt: ShardManagerOptions<H>,
-    ) -> (Arc<Mutex<Self>>, ShardManagerMonitor) where H: EventHandler + Send + Sync + 'static {
+    pub fn new<H, RH>(
+        opt: ShardManagerOptions<'_, H, RH>,
+    ) -> (Arc<Mutex<Self>>, ShardManagerMonitor)
+        where H: EventHandler + Send + Sync + 'static,
+              RH: RawEventHandler + Send + Sync + 'static {
         let (thread_tx, thread_rx) = mpsc::channel();
         let (shard_queue_tx, shard_queue_rx) = mpsc::channel();
 
@@ -139,7 +144,8 @@ impl ShardManager {
 
         let mut shard_queuer = ShardQueuer {
             data: Arc::clone(opt.data),
-            event_handler: Arc::clone(opt.event_handler),
+            event_handler: opt.event_handler.as_ref().map(|h| Arc::clone(h)),
+            raw_event_handler: opt.raw_event_handler.as_ref().map(|rh| Arc::clone(rh)),
             #[cfg(feature = "framework")]
             framework: Arc::clone(opt.framework),
             last_start: None,
@@ -148,10 +154,10 @@ impl ShardManager {
             runners: Arc::clone(&runners),
             rx: shard_queue_rx,
             threadpool: opt.threadpool,
-            token: Arc::clone(opt.token),
             #[cfg(feature = "voice")]
             voice_manager: Arc::clone(opt.voice_manager),
             ws_url: Arc::clone(opt.ws_url),
+            cache_and_http: Arc::clone(&opt.cache_and_http),
         };
 
         thread::spawn(move || {
@@ -283,7 +289,7 @@ impl ShardManager {
         if let Some(runner) = self.runners.lock().get(&shard_id) {
             let shutdown = ShardManagerMessage::Shutdown(shard_id);
             let client_msg = ShardClientMessage::Manager(shutdown);
-            let msg = InterMessage::Client(client_msg);
+            let msg = InterMessage::Client(Box::new(client_msg));
 
             if let Err(why) = runner.runner_tx.send(msg) {
                 warn!(
@@ -350,17 +356,18 @@ impl Drop for ShardManager {
     }
 }
 
-pub struct ShardManagerOptions<'a, H: EventHandler + Send + Sync + 'static> {
-    pub data: &'a Arc<Mutex<ShareMap>>,
-    pub event_handler: &'a Arc<H>,
+pub struct ShardManagerOptions<'a, H: EventHandler + Send + Sync + 'static, RH: RawEventHandler + Send + Sync + 'static> {
+    pub data: &'a Arc<RwLock<ShareMap>>,
+    pub event_handler: &'a Option<Arc<H>>,
+    pub raw_event_handler: &'a Option<Arc<RH>>,
     #[cfg(feature = "framework")]
-    pub framework: &'a Arc<Mutex<Option<Box<Framework + Send>>>>,
+    pub framework: &'a Arc<Mutex<Option<Box<dyn Framework + Send>>>>,
     pub shard_index: u64,
     pub shard_init: u64,
     pub shard_total: u64,
     pub threadpool: ThreadPool,
-    pub token: &'a Arc<Mutex<String>>,
     #[cfg(feature = "voice")]
     pub voice_manager: &'a Arc<Mutex<ClientVoiceManager>>,
     pub ws_url: &'a Arc<Mutex<String>>,
+    pub cache_and_http: &'a Arc<CacheAndHttp>,
 }

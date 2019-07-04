@@ -6,7 +6,7 @@ use std::{
         Result as FmtResult
     }
 };
-use websocket::message::CloseData;
+use tungstenite::protocol::CloseFrame;
 
 /// An error that occurred while attempting to deal with the gateway.
 ///
@@ -17,7 +17,7 @@ pub enum Error {
     /// There was an error building a URL.
     BuildingUrl,
     /// The connection closed, potentially uncleanly.
-    Closed(Option<CloseData>),
+    Closed(Option<CloseFrame<'static>>),
     /// Expected a Hello during a handshake
     ExpectedHello,
     /// When there was an error sending a heartbeat.
@@ -50,10 +50,12 @@ pub enum Error {
     OverloadedShard,
     /// Failed to reconnect after a number of attempts.
     ReconnectFailure,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult { f.write_str(self.description()) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult { f.write_str(self.description()) }
 }
 
 impl StdError for Error {
@@ -73,6 +75,7 @@ impl StdError for Error {
             NoSessionId => "No Session Id present when required",
             OverloadedShard => "Shard has too many guilds",
             ReconnectFailure => "Failed to Reconnect",
+            __Nonexhaustive => unreachable!(),
         }
     }
 }

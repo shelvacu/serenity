@@ -1,20 +1,22 @@
 use chrono::{DateTime, FixedOffset};
-use model::prelude::*;
+use crate::model::prelude::*;
 
 #[cfg(feature = "model")]
-use builder::{
+use crate::builder::{
     CreateMessage,
     EditMessage,
     GetMessages
 };
 #[cfg(feature = "model")]
-use http::{self, AttachmentType};
+use crate::http::AttachmentType;
 #[cfg(feature = "model")]
-use internal::RwLockExt;
+use crate::internal::RwLockExt;
 #[cfg(feature = "model")]
 use std::borrow::Cow;
 #[cfg(feature = "model")]
 use std::fmt::Write as FmtWrite;
+#[cfg(feature = "http")]
+use crate::http::Http;
 
 /// A group channel - potentially including other [`User`]s - separate from a
 /// [`Guild`].
@@ -40,6 +42,8 @@ pub struct Group {
     #[serde(deserialize_with = "deserialize_users",
             serialize_with = "serialize_users")]
     pub recipients: HashMap<UserId, Arc<RwLock<User>>>,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
@@ -53,23 +57,26 @@ impl Group {
     /// user.
     ///
     /// [`http::add_group_recipient`]: ../../http/fn.add_group_recipient.html
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn add_recipient<U: Into<UserId>>(&self, user: U) -> Result<()> {
-        self._add_recipient(user.into())
+    pub fn add_recipient<U: Into<UserId>>(&self, http: impl AsRef<Http>, user: U) -> Result<()> {
+        self._add_recipient(&http, user.into())
     }
 
-    fn _add_recipient(&self, user: UserId) -> Result<()> {
+    #[cfg(feature = "http")]
+    fn _add_recipient(&self, http: impl AsRef<Http>, user: UserId) -> Result<()> {
         // If the group already contains the recipient, do nothing.
         if self.recipients.contains_key(&user) {
             return Ok(());
         }
 
-        http::add_group_recipient(self.channel_id.0, user.0)
+        http.as_ref().add_group_recipient(self.channel_id.0, user.0)
     }
 
     /// Broadcasts that the current user is typing in the group.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn broadcast_typing(&self) -> Result<()> { self.channel_id.broadcast_typing() }
+    pub fn broadcast_typing(&self, http: impl AsRef<Http>) -> Result<()> { self.channel_id.broadcast_typing(&http) }
 
     /// React to a [`Message`] with a custom [`Emoji`] or unicode character.
     ///
@@ -83,10 +90,11 @@ impl Group {
     /// [`Message`]: struct.Message.html
     /// [`Message::react`]: struct.Message.html#method.react
     /// [Add Reactions]: ../permissions/struct.Permissions.html#associatedconstant.ADD_REACTIONS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_reaction<M, R>(&self, message_id: M, reaction_type: R) -> Result<()>
+    pub fn create_reaction<M, R>(&self, http: impl AsRef<Http>, message_id: M, reaction_type: R) -> Result<()>
         where M: Into<MessageId>, R: Into<ReactionType> {
-        self.channel_id.create_reaction(message_id, reaction_type)
+        self.channel_id.create_reaction(&http, message_id, reaction_type)
     }
 
     /// Deletes all messages by Ids from the given vector in the channel.
@@ -106,9 +114,13 @@ impl Group {
     /// [`Channel::delete_messages`]: enum.Channel.html#method.delete_messages
     /// [`ModelError::BulkDeleteAmount`]: ../error/enum.Error.html#variant.BulkDeleteAmount
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_messages<T: AsRef<MessageId>, It: IntoIterator<Item=T>>(&self, message_ids: It) -> Result<()> {
-        self.channel_id.delete_messages(message_ids)
+    pub fn delete_messages<T: AsRef<MessageId>, It: IntoIterator<Item=T>>(&self,
+        http: impl AsRef<Http>,
+        message_ids: It)
+        -> Result<()> {
+        self.channel_id.delete_messages(&http, message_ids)
     }
 
     /// Deletes all permission overrides in the channel from a member
@@ -117,9 +129,10 @@ impl Group {
     /// **Note**: Requires the [Manage Channel] permission.
     ///
     /// [Manage Channel]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_CHANNELS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_permission(&self, permission_type: PermissionOverwriteType) -> Result<()> {
-        self.channel_id.delete_permission(permission_type)
+    pub fn delete_permission(&self, http: impl AsRef<Http>, permission_type: PermissionOverwriteType) -> Result<()> {
+        self.channel_id.delete_permission(&http, permission_type)
     }
 
     /// Deletes the given [`Reaction`] from the channel.
@@ -129,15 +142,17 @@ impl Group {
     ///
     /// [`Reaction`]: struct.Reaction.html
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
     pub fn delete_reaction<M, R>(&self,
+                                 http: impl AsRef<Http>,
                                  message_id: M,
                                  user_id: Option<UserId>,
                                  reaction_type: R)
                                  -> Result<()>
         where M: Into<MessageId>, R: Into<ReactionType> {
         self.channel_id
-            .delete_reaction(message_id, user_id, reaction_type)
+            .delete_reaction(&http, message_id, user_id, reaction_type)
     }
 
     /// Edits a [`Message`] in the channel given its Id.
@@ -159,10 +174,11 @@ impl Group {
     /// [`EditMessage`]: ../../builder/struct.EditMessage.html
     /// [`Message`]: struct.Message.html
     /// [`the limit`]: ../../builder/struct.EditMessage.html#method.content
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_message<F, M>(&self, message_id: M, f: F) -> Result<Message>
-        where F: FnOnce(EditMessage) -> EditMessage, M: Into<MessageId> {
-        self.channel_id.edit_message(message_id, f)
+    pub fn edit_message<F, M>(&self, http: impl AsRef<Http>, message_id: M, f: F) -> Result<Message>
+        where F: FnOnce(&mut EditMessage) -> &mut EditMessage, M: Into<MessageId> {
+        self.channel_id.edit_message(&http, message_id, f)
     }
 
     /// Returns the formatted URI of the group's icon if one exists.
@@ -180,28 +196,35 @@ impl Group {
     pub fn is_nsfw(&self) -> bool { false }
 
     /// Leaves the group.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn leave(&self) -> Result<Group> { http::leave_group(self.channel_id.0) }
+    pub fn leave(&self, http: impl AsRef<Http>) -> Result<Group> { http.as_ref().leave_group(self.channel_id.0) }
 
     /// Gets a message from the channel.
     ///
     /// Requires the [Read Message History] permission.
     ///
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn message<M: Into<MessageId>>(&self, message_id: M) -> Result<Message> {
-        self.channel_id.message(message_id)
+    pub fn message<M: Into<MessageId>>(&self, http: impl AsRef<Http>, message_id: M) -> Result<Message> {
+        self.channel_id.message(&http, message_id)
     }
 
     /// Gets messages from the channel.
     ///
+    /// Refer to the [`GetMessages`]-builder for more information on how to
+    /// use `builder`.
+    ///
     /// Requires the [Read Message History] permission.
     ///
+    /// [`GetMessages`]: ../../builder/struct.GetMessages.html
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn messages<F>(&self, f: F) -> Result<Vec<Message>>
-        where F: FnOnce(GetMessages) -> GetMessages {
-        self.channel_id.messages(f)
+    pub fn messages<F>(&self, http: impl AsRef<Http>, builder: F) -> Result<Vec<Message>>
+        where F: FnOnce(&mut GetMessages) -> &mut GetMessages {
+        self.channel_id.messages(&http, builder)
     }
 
     /// Generates a name for the group.
@@ -209,7 +232,7 @@ impl Group {
     /// If there are no recipients in the group, the name will be "Empty Group".
     /// Otherwise, the name is generated in a Comma Separated Value list, such
     /// as "person 1, person 2, person 3".
-    pub fn name(&self) -> Cow<str> {
+    pub fn name(&self) -> Cow<'_, str> {
         match self.name {
             Some(ref name) => Cow::Borrowed(name),
             None => {
@@ -228,8 +251,9 @@ impl Group {
     }
 
     /// Retrieves the list of messages that have been pinned in the group.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn pins(&self) -> Result<Vec<Message>> { self.channel_id.pins() }
+    pub fn pins(&self, http: impl AsRef<Http>) -> Result<Vec<Message>> { self.channel_id.pins(&http) }
 
     /// Gets the list of [`User`]s who have reacted to a [`Message`] with a
     /// certain [`Emoji`].
@@ -243,9 +267,11 @@ impl Group {
     /// [`Message`]: struct.Message.html
     /// [`User`]: ../user/struct.User.html
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
+    #[cfg(feature = "http")]
     #[inline]
     pub fn reaction_users<M, R, U>(
         &self,
+        http: impl AsRef<Http>,
         message_id: M,
         reaction_type: R,
         limit: Option<u8>,
@@ -253,25 +279,27 @@ impl Group {
     ) -> Result<Vec<User>> where M: Into<MessageId>,
                                  R: Into<ReactionType>,
                                  U: Into<Option<UserId>> {
-        self.channel_id.reaction_users(message_id, reaction_type, limit, after)
+        self.channel_id.reaction_users(&http, message_id, reaction_type, limit, after)
     }
 
     /// Removes a recipient from the group. If the recipient is already not in
     /// the group, then nothing is done.
     ///
     /// **Note**: This is only available to the group owner.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn remove_recipient<U: Into<UserId>>(&self, user: U) -> Result<()> {
-        self._remove_recipient(user.into())
+    pub fn remove_recipient<U: Into<UserId>>(&self, http: impl AsRef<Http>, user: U) -> Result<()> {
+        self._remove_recipient(&http, user.into())
     }
 
-    fn _remove_recipient(&self, user: UserId) -> Result<()> {
+    #[cfg(feature = "http")]
+    fn _remove_recipient(&self, http: impl AsRef<Http>, user: UserId) -> Result<()> {
         // If the group does not contain the recipient already, do nothing.
         if !self.recipients.contains_key(&user) {
             return Ok(());
         }
 
-        http::remove_group_recipient(self.channel_id.0, user.0)
+        http.as_ref().remove_group_recipient(self.channel_id.0, user.0)
     }
 
     /// Sends a message with just the given message content in the channel.
@@ -284,8 +312,9 @@ impl Group {
     ///
     /// [`ChannelId`]: ../id/struct.ChannelId.html
     /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn say(&self, content: &str) -> Result<Message> { self.channel_id.say(content) }
+    pub fn say(&self, http: impl AsRef<Http>, content: impl std::fmt::Display) -> Result<Message> { self.channel_id.say(&http, content) }
 
     /// Sends (a) file(s) along with optional message contents.
     ///
@@ -305,10 +334,11 @@ impl Group {
     /// [`ClientError::MessageTooLong`]: ../../client/enum.ClientError.html#variant.MessageTooLong
     /// [Attach Files]: ../permissions/struct.Permissions.html#associatedconstant.ATTACH_FILES
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn send_files<'a, F, T, It: IntoIterator<Item=T>>(&self, files: It, f: F) -> Result<Message>
-        where F: FnOnce(CreateMessage) -> CreateMessage, T: Into<AttachmentType<'a>> {
-        self.channel_id.send_files(files, f)
+    pub fn send_files<'a, F, T, It: IntoIterator<Item=T>>(&self, http: impl AsRef<Http>, files: It, f: F) -> Result<Message>
+        where for <'b> F: FnOnce(&'b mut CreateMessage<'a>) -> &'b mut CreateMessage<'a>, T: Into<AttachmentType<'a>> {
+        self.channel_id.send_files(&http, files, f)
     }
 
     /// Sends a message to the group with the given content.
@@ -320,9 +350,11 @@ impl Group {
     ///
     /// [`CreateMessage`]: ../../builder/struct.CreateMessage.html
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn send_message<F: FnOnce(CreateMessage) -> CreateMessage>(&self, f: F) -> Result<Message> {
-        self.channel_id.send_message(f)
+    pub fn send_message<'a, F>(&self, http: impl AsRef<Http>, f: F) -> Result<Message>
+        where for <'b> F: FnOnce(&'b mut CreateMessage<'a>) -> &'b mut CreateMessage<'a> {
+        self.channel_id.send_message(&http, f)
     }
 
     /// Unpins a [`Message`] in the channel given by its Id.
@@ -331,8 +363,9 @@ impl Group {
     ///
     /// [`Message`]: struct.Message.html
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn unpin<M: Into<MessageId>>(&self, message_id: M) -> Result<()> {
-        self.channel_id.unpin(message_id)
+    pub fn unpin<M: Into<MessageId>>(&self, http: impl AsRef<Http>, message_id: M) -> Result<()> {
+        self.channel_id.unpin(&http, message_id)
     }
 }

@@ -10,15 +10,17 @@ use super::{
 };
 
 #[cfg(feature = "model")]
-use builder::ExecuteWebhook;
+use crate::builder::ExecuteWebhook;
 #[cfg(feature = "model")]
-use internal::prelude::*;
+use crate::internal::prelude::*;
 #[cfg(feature = "model")]
 use std::mem;
 #[cfg(feature = "model")]
 use super::channel::Message;
 #[cfg(feature = "model")]
-use {http, utils};
+use crate::utils;
+#[cfg(feature = "http")]
+use crate::http::Http;
 
 /// A representation of a webhook, which is a low-effort way to post messages to
 /// channels. They do not necessarily require a bot user or authentication to
@@ -51,6 +53,8 @@ pub struct Webhook {
     ///
     /// **Note**: This is not received when getting a webhook by its token.
     pub user: Option<User>,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
@@ -62,7 +66,7 @@ impl Webhook {
     ///
     /// [`http::delete_webhook_with_token`]: ../../http/fn.delete_webhook_with_token.html
     #[inline]
-    pub fn delete(&self) -> Result<()> { http::delete_webhook_with_token(self.id.0, &self.token) }
+    pub fn delete(&self, http: impl AsRef<Http>) -> Result<()> { http.as_ref().delete_webhook_with_token(self.id.0, &self.token) }
 
     ///
     /// Edits the webhook in-place. All fields are optional.
@@ -80,37 +84,42 @@ impl Webhook {
     /// Editing a webhook's name:
     ///
     /// ```rust,no_run
-    /// use serenity::http;
+    /// # use serenity::http::Http;
+    /// # use std::sync::Arc;
+    /// #
+    /// # let http = Arc::new(Http::default());
     ///
     /// let id = 245037420704169985;
     /// let token = "ig5AO-wdVWpCBtUUMxmgsWryqgsW3DChbKYOINftJ4DCrUbnkedoYZD0VOH1QLr-S3sV";
     ///
-    /// let mut webhook = http::get_webhook_with_token(id, token)
+    /// let mut webhook = http.as_ref().get_webhook_with_token(id, token)
     ///     .expect("valid webhook");
     ///
-    /// let _ = webhook.edit(Some("new name"), None).expect("Error editing");
+    /// let _ = webhook.edit(&http, Some("new name"), None).expect("Error editing");
     /// ```
     ///
     /// Setting a webhook's avatar:
     ///
     /// ```rust,no_run
-    /// use serenity::http;
-    ///
+    /// # use serenity::http::Http;
+    /// # use std::sync::Arc;
+    /// #
+    /// # let http = Arc::new(Http::default());
     /// let id = 245037420704169985;
     /// let token = "ig5AO-wdVWpCBtUUMxmgsWryqgsW3DChbKYOINftJ4DCrUbnkedoYZD0VOH1QLr-S3sV";
     ///
-    /// let mut webhook = http::get_webhook_with_token(id, token)
+    /// let mut webhook = http.as_ref().get_webhook_with_token(id, token)
     ///     .expect("valid webhook");
     ///
     /// let image = serenity::utils::read_image("./webhook_img.png")
     ///     .expect("Error reading image");
     ///
-    /// let _ = webhook.edit(None, Some(&image)).expect("Error editing");
+    /// let _ = webhook.edit(&http, None, Some(&image)).expect("Error editing");
     /// ```
     ///
     /// [`http::edit_webhook`]: ../../http/fn.edit_webhook.html
     /// [`http::edit_webhook_with_token`]: ../../http/fn.edit_webhook_with_token.html
-    pub fn edit(&mut self, name: Option<&str>, avatar: Option<&str>) -> Result<()> {
+    pub fn edit(&mut self, http: impl AsRef<Http>, name: Option<&str>, avatar: Option<&str>) -> Result<()> {
         if name.is_none() && avatar.is_none() {
             return Ok(());
         }
@@ -132,7 +141,7 @@ impl Webhook {
             map.insert("name".to_string(), Value::String(name.to_string()));
         }
 
-        match http::edit_webhook_with_token(self.id.0, &self.token, &map) {
+        match http.as_ref().edit_webhook_with_token(self.id.0, &self.token, &map) {
             Ok(replacement) => {
                 mem::replace(self, replacement);
 
@@ -152,51 +161,65 @@ impl Webhook {
     /// Execute a webhook with message content of `test`:
     ///
     /// ```rust,no_run
-    /// use serenity::http;
-    ///
+    /// use serenity::http::Http;
+    /// # use std::sync::Arc;
+    /// #
+    /// # let http = Arc::new(Http::default());
     /// let id = 245037420704169985;
     /// let token = "ig5AO-wdVWpCBtUUMxmgsWryqgsW3DChbKYOINftJ4DCrUbnkedoYZD0VOH1QLr-S3sV";
     ///
-    /// let mut webhook = http::get_webhook_with_token(id, token)
+    /// let mut webhook = http.as_ref().get_webhook_with_token(id, token)
     ///     .expect("valid webhook");
     ///
-    /// let _ = webhook.execute(false, |w| w.content("test")).expect("Error executing");
+    /// let _ = webhook.execute(&http, false, |mut w| {
+    ///     w.content("test");
+    ///
+    ///     w
+    /// });
     /// ```
     ///
     /// Execute a webhook with message content of `test`, overriding the
     /// username to `serenity`, and sending an embed:
     ///
     /// ```rust,no_run
-    /// use serenity::http;
+    /// # use serenity::http::Http;
+    /// # use std::sync::Arc;
+    /// #
+    /// # let http = Arc::new(Http::default());
     /// use serenity::model::channel::Embed;
     ///
     /// let id = 245037420704169985;
     /// let token = "ig5AO-wdVWpCBtUUMxmgsWryqgsW3DChbKYOINftJ4DCrUbnkedoYZD0VOH1QLr-S3sV";
     ///
-    /// let mut webhook = http::get_webhook_with_token(id, token)
+    /// let mut webhook = http.as_ref().get_webhook_with_token(id, token)
     ///     .expect("valid webhook");
     ///
-    /// let embed = Embed::fake(|e| e
-    ///     .title("Rust's website")
-    ///     .description("Rust is a systems programming language that runs
-    ///                   blazingly fast, prevents segfaults, and guarantees
-    ///                   thread safety.")
-    ///     .url("https://rust-lang.org"));
+    /// let embed = Embed::fake(|mut e| {
+    ///     e.title("Rust's website");
+    ///     e.description("Rust is a systems programming language that runs
+    ///                    blazingly fast, prevents segfaults, and guarantees
+    ///                    thread safety.");
+    ///     e.url("https://rust-lang.org");
     ///
-    /// let _ = webhook.execute(false, |w| w
-    ///     .content("test")
-    ///     .username("serenity")
-    ///     .embeds(vec![embed]))
-    ///     .expect("Error executing");
+    ///     e
+    /// });
+    ///
+    /// let _ = webhook.execute(&http, false, |mut w| {
+    ///     w.content("test");
+    ///     w.username("serenity");
+    ///     w.embeds(vec![embed]);
+    ///
+    ///     w
+    /// });
     /// ```
     #[inline]
-    pub fn execute<F: FnOnce(ExecuteWebhook) -> ExecuteWebhook>(&self,
-                                                                wait: bool,
-                                                                f: F)
-                                                                -> Result<Option<Message>> {
-        let map = utils::vecmap_to_json_map(f(ExecuteWebhook::default()).0);
+    pub fn execute<F>(&self, http: impl AsRef<Http>, wait: bool, f: F) -> Result<Option<Message>>
+    where F: FnOnce(&mut ExecuteWebhook) -> &mut ExecuteWebhook {
+        let mut execute_webhook = ExecuteWebhook::default();
+        f(&mut execute_webhook);
+        let map = utils::hashmap_to_json_map(execute_webhook.0);
 
-        http::execute_webhook(self.id.0, &self.token, wait, &map)
+     http.as_ref().execute_webhook(self.id.0, &self.token, wait, &map)
     }
 
     /// Retrieves the latest information about the webhook, editing the
@@ -206,8 +229,8 @@ impl Webhook {
     /// authentication is not required.
     ///
     /// [`http::get_webhook_with_token`]: ../../http/fn.get_webhook_with_token.html
-    pub fn refresh(&mut self) -> Result<()> {
-        match http::get_webhook_with_token(self.id.0, &self.token) {
+    pub fn refresh(&mut self, http: impl AsRef<Http>) -> Result<()> {
+        match http.as_ref().get_webhook_with_token(self.id.0, &self.token) {
             Ok(replacement) => {
                 let _ = mem::replace(self, replacement);
 
@@ -220,15 +243,6 @@ impl Webhook {
 
 #[cfg(feature = "model")]
 impl WebhookId {
-    /// Retrieves the webhook by the Id.
-    ///
-    /// **Note**: Requires the [Manage Webhooks] permission.
-    ///
-    /// [Manage Webhooks]: ../../model/permissions/struct.Permissions.html#associatedconstant.MANAGE_WEBHOOKS
-    #[inline]
-    #[deprecated(since = "0.5.8", note = "Use the `to_webhook`-method instead.")]
-    pub fn get(self) -> Result<Webhook> { self.to_webhook() }
-
     /// Requests [`Webhook`] over REST API.
     ///
     /// **Note**: Requires the [Manage Webhooks] permission.
@@ -236,5 +250,5 @@ impl WebhookId {
     /// [`Webhook`]: struct.Webhook.html
     /// [Manage Webhooks]: ../../model/permissions/struct.Permissions.html#associatedconstant.MANAGE_WEBHOOKS
     #[inline]
-    pub fn to_webhook(self) -> Result<Webhook> { http::get_webhook(self.0) }
+    pub fn to_webhook(self, http: impl AsRef<Http>) -> Result<Webhook> { http.as_ref().get_webhook(self.0) }
 }

@@ -1,8 +1,14 @@
-use model::prelude::*;
-use super::super::utils::{deserialize_emojis, deserialize_roles};
+#[cfg(feature = "http")]
+use crate::http::CacheHttp;
+use crate::{model::prelude::*};
+use super::super::utils::{deserialize_emojis, deserialize_roles, deserialize_u64_or_zero};
 
 #[cfg(feature = "model")]
-use builder::{EditGuild, EditMember, EditRole};
+use crate::builder::{CreateChannel, EditGuild, EditMember, EditRole};
+#[cfg(feature = "http")]
+use crate::http::Http;
+#[cfg(all(feature = "cache", feature = "utils", feature = "client"))]
+use crate::cache::CacheRwLock;
 
 /// Partial information about a [`Guild`]. This does not include information
 /// like member data.
@@ -16,7 +22,7 @@ pub struct PartialGuild {
     pub default_message_notifications: DefaultMessageNotificationLevel,
     pub embed_channel_id: Option<ChannelId>,
     pub embed_enabled: bool,
-    #[serde(deserialize_with = "deserialize_emojis")] pub emojis: HashMap<EmojiId, Emoji>,
+    #[serde(serialize_with = "serialize_emojis", deserialize_with = "deserialize_emojis")] pub emojis: HashMap<EmojiId, Emoji>,
     /// Features enabled for the guild.
     ///
     /// Refer to [`Guild::features`] for more information.
@@ -28,9 +34,18 @@ pub struct PartialGuild {
     pub name: String,
     pub owner_id: UserId,
     pub region: String,
-    #[serde(deserialize_with = "deserialize_roles")] pub roles: HashMap<RoleId, Role>,
+    #[serde(serialize_with = "serialize_roles", deserialize_with = "deserialize_roles")] pub roles: HashMap<RoleId, Role>,
     pub splash: Option<String>,
     pub verification_level: VerificationLevel,
+    pub description: Option<String>,
+    pub premium_tier: PremiumTier,
+    // In some cases Discord returns `null` rather than 0.
+    #[serde(deserialize_with = "deserialize_u64_or_zero")]
+    pub premium_subscription_count: u64,
+    pub banner: Option<String>,
+    pub vanity_url_code: Option<String>,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
@@ -58,14 +73,15 @@ impl PartialGuild {
     /// [`ModelError::DeleteMessageDaysAmount`]: ../error/enum.Error.html#variant.DeleteMessageDaysAmount
     /// [`User`]: ../user/struct.User.html
     /// [Ban Members]: ../permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
-    pub fn ban<U: Into<UserId>>(&self, user: U, delete_message_days: u8) -> Result<()> {
+    #[cfg(feature = "http")]
+    pub fn ban<U: Into<UserId>>(&self, http: impl AsRef<Http>, user: U, delete_message_days: u8) -> Result<()> {
         if delete_message_days > 7 {
             return Err(Error::Model(
                 ModelError::DeleteMessageDaysAmount(delete_message_days),
             ));
         }
 
-        self.id.ban(user, &delete_message_days)
+        self.id.ban(&http, user, &delete_message_days)
     }
 
     /// Gets a list of the guild's bans.
@@ -73,14 +89,16 @@ impl PartialGuild {
     /// Requires the [Ban Members] permission.
     ///
     /// [Ban Members]: ../permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn bans(&self) -> Result<Vec<Ban>> { self.id.bans() }
+    pub fn bans(&self, http: impl AsRef<Http>) -> Result<Vec<Ban>> { self.id.bans(&http) }
 
     /// Gets all of the guild's channels over the REST API.
     ///
     /// [`Guild`]: struct.Guild.html
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn channels(&self) -> Result<HashMap<ChannelId, GuildChannel>> { self.id.channels() }
+    pub fn channels(&self, http: impl AsRef<Http>) -> Result<HashMap<ChannelId, GuildChannel>> { self.id.channels(&http) }
 
     /// Creates a [`GuildChannel`] in the guild.
     ///
@@ -95,16 +113,16 @@ impl PartialGuild {
     /// ```rust,ignore
     /// use serenity::model::ChannelType;
     ///
-    /// guild.create_channel("test", ChannelType::Voice, None);
+    /// guild.create_channel(|c| c.name("test").kind(ChannelType::Voice));
     /// ```
     ///
     /// [`GuildChannel`]: ../channel/struct.GuildChannel.html
     /// [`http::create_channel`]: ../../http/fn.create_channel.html
     /// [Manage Channels]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_CHANNELS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_channel<C>(&self, name: &str, kind: ChannelType, category: C) -> Result<GuildChannel>
-        where C: Into<Option<ChannelId>> {
-        self.id.create_channel(name, kind, category)
+    pub fn create_channel(&self, http: impl AsRef<Http>, f: impl FnOnce(&mut CreateChannel) -> &mut CreateChannel) -> Result<GuildChannel> {
+        self.id.create_channel(&http, f)
     }
 
     /// Creates an emoji in the guild with a name and base64-encoded image.
@@ -124,9 +142,10 @@ impl PartialGuild {
     /// [`Guild::create_emoji`]: struct.Guild.html#method.create_emoji
     /// [`utils::read_image`]: ../../utils/fn.read_image.html
     /// [Manage Emojis]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_EMOJIS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_emoji(&self, name: &str, image: &str) -> Result<Emoji> {
-        self.id.create_emoji(name, image)
+    pub fn create_emoji(&self, http: impl AsRef<Http>, name: &str, image: &str) -> Result<Emoji> {
+        self.id.create_emoji(&http, name, image)
     }
 
     /// Creates an integration for the guild.
@@ -134,10 +153,11 @@ impl PartialGuild {
     /// Requires the [Manage Guild] permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_integration<I>(&self, integration_id: I, kind: &str) -> Result<()>
+    pub fn create_integration<I>(&self, http: impl AsRef<Http>, integration_id: I, kind: &str) -> Result<()>
         where I: Into<IntegrationId> {
-        self.id.create_integration(integration_id, kind)
+        self.id.create_integration(&http, integration_id, kind)
     }
 
     /// Creates a new role in the guild with the data set, if any.
@@ -154,17 +174,20 @@ impl PartialGuild {
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [`Guild::create_role`]: struct.Guild.html#method.create_role
     /// [Manage Roles]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_ROLES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_role<F: FnOnce(EditRole) -> EditRole>(&self, f: F) -> Result<Role> {
-        self.id.create_role(f)
+    pub fn create_role<F>(&self, http: impl AsRef<Http>, f: F) -> Result<Role>
+    where F: FnOnce(&mut EditRole) -> &mut EditRole {
+        self.id.create_role(&http, f)
     }
 
     /// Deletes the current guild if the current user is the owner of the
     /// guild.
     ///
     /// **Note**: Requires the current user to be the owner of the guild.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete(&self) -> Result<PartialGuild> { self.id.delete() }
+    pub fn delete(&self, http: impl AsRef<Http>) -> Result<PartialGuild> { self.id.delete(&http) }
 
     /// Deletes an [`Emoji`] from the guild.
     ///
@@ -172,9 +195,10 @@ impl PartialGuild {
     ///
     /// [`Emoji`]: struct.Emoji.html
     /// [Manage Emojis]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_EMOJIS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_emoji<E: Into<EmojiId>>(&self, emoji_id: E) -> Result<()> {
-        self.id.delete_emoji(emoji_id)
+    pub fn delete_emoji<E: Into<EmojiId>>(&self, http: impl AsRef<Http>, emoji_id: E) -> Result<()> {
+        self.id.delete_emoji(&http, emoji_id)
     }
 
     /// Deletes an integration by Id from the guild.
@@ -183,8 +207,8 @@ impl PartialGuild {
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
     #[inline]
-    pub fn delete_integration<I: Into<IntegrationId>>(&self, integration_id: I) -> Result<()> {
-        self.id.delete_integration(integration_id)
+    pub fn delete_integration<I: Into<IntegrationId>>(&self, http: impl AsRef<Http>, integration_id: I) -> Result<()> {
+        self.id.delete_integration(&http, integration_id)
     }
 
     /// Deletes a [`Role`] by Id from the guild.
@@ -198,8 +222,8 @@ impl PartialGuild {
     /// [`Role::delete`]: struct.Role.html#method.delete
     /// [Manage Roles]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_ROLES
     #[inline]
-    pub fn delete_role<R: Into<RoleId>>(&self, role_id: R) -> Result<()> {
-        self.id.delete_role(role_id)
+    pub fn delete_role<R: Into<RoleId>>(&self, http: impl AsRef<Http>, role_id: R) -> Result<()> {
+        self.id.delete_role(&http, role_id)
     }
 
     /// Edits the current guild with new data where specified.
@@ -208,9 +232,10 @@ impl PartialGuild {
     /// permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
-    pub fn edit<F>(&mut self, f: F) -> Result<()>
-        where F: FnOnce(EditGuild) -> EditGuild {
-        match self.id.edit(f) {
+    #[cfg(feature = "http")]
+    pub fn edit<F>(&mut self, http: impl AsRef<Http>, f: F) -> Result<()>
+        where F: FnOnce(&mut EditGuild) -> &mut EditGuild {
+        match self.id.edit(&http, f) {
             Ok(guild) => {
                 self.afk_channel_id = guild.afk_channel_id;
                 self.afk_timeout = guild.afk_timeout;
@@ -243,9 +268,10 @@ impl PartialGuild {
     /// [`Emoji::edit`]: struct.Emoji.html#method.edit
     /// [Manage Emojis]:
     /// ../permissions/struct.Permissions.html#associatedconstant.MANAGE_EMOJIS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_emoji<E: Into<EmojiId>>(&self, emoji_id: E, name: &str) -> Result<Emoji> {
-        self.id.edit_emoji(emoji_id, name)
+    pub fn edit_emoji<E: Into<EmojiId>>(&self, http: impl AsRef<Http>, emoji_id: E, name: &str) -> Result<Emoji> {
+        self.id.edit_emoji(&http, emoji_id, name)
     }
 
     /// Edits the properties of member of the guild, such as muting or
@@ -263,10 +289,11 @@ impl PartialGuild {
     ///
     /// GuildId(7).edit_member(user_id, |m| m.mute(true).roles(&vec![role_id]));
     /// ```
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_member<F, U>(&self, user_id: U, f: F) -> Result<()>
-        where F: FnOnce(EditMember) -> EditMember, U: Into<UserId> {
-        self.id.edit_member(user_id, f)
+    pub fn edit_member<F, U>(&self, http: impl AsRef<Http>, user_id: U, f: F) -> Result<()>
+        where F: FnOnce(&mut EditMember) -> &mut EditMember, U: Into<UserId> {
+        self.id.edit_member(&http, user_id, f)
     }
 
     /// Edits the current user's nickname for the guild.
@@ -283,16 +310,20 @@ impl PartialGuild {
     ///
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [Change Nickname]: ../permissions/struct.Permissions.html#associatedconstant.CHANGE_NICKNAME
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_nickname(&self, new_nickname: Option<&str>) -> Result<()> {
-        self.id.edit_nickname(new_nickname)
+    pub fn edit_nickname(&self, http: impl AsRef<Http>, new_nickname: Option<&str>) -> Result<()> {
+        self.id.edit_nickname(&http, new_nickname)
     }
 
     /// Gets a partial amount of guild data by its Id.
     ///
     /// Requires that the current user be in the guild.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn get<G: Into<GuildId>>(guild_id: G) -> Result<PartialGuild> { guild_id.into().to_partial_guild() }
+    pub fn get<G: Into<GuildId>>(http: impl AsRef<Http>, guild_id: G) -> Result<PartialGuild> {
+        guild_id.into().to_partial_guild(&http)
+    }
 
     /// Kicks a [`Member`] from the guild.
     ///
@@ -300,8 +331,9 @@ impl PartialGuild {
     ///
     /// [`Member`]: struct.Member.html
     /// [Kick Members]: ../permissions/struct.Permissions.html#associatedconstant.KICK_MEMBERS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn kick<U: Into<UserId>>(&self, user_id: U) -> Result<()> { self.id.kick(user_id) }
+    pub fn kick<U: Into<UserId>>(&self, http: impl AsRef<Http>, user_id: U) -> Result<()> { self.id.kick(&http, user_id) }
 
     /// Returns a formatted URL of the guild's icon, if the guild has an icon.
     pub fn icon_url(&self) -> Option<String> {
@@ -313,26 +345,32 @@ impl PartialGuild {
     /// Gets all integration of the guild.
     ///
     /// This performs a request over the REST API.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn integrations(&self) -> Result<Vec<Integration>> { self.id.integrations() }
+    pub fn integrations(&self, http: impl AsRef<Http>) -> Result<Vec<Integration>> { self.id.integrations(&http) }
 
     /// Gets all of the guild's invites.
     ///
     /// Requires the [Manage Guild] permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn invites(&self) -> Result<Vec<RichInvite>> { self.id.invites() }
+    pub fn invites(&self, http: impl AsRef<Http>) -> Result<Vec<RichInvite>> { self.id.invites(&http) }
 
     /// Leaves the guild.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn leave(&self) -> Result<()> { self.id.leave() }
+    pub fn leave(&self, http: impl AsRef<Http>) -> Result<()> { self.id.leave(&http) }
 
     /// Gets a user's [`Member`] for the guild by Id.
     ///
     /// [`Guild`]: struct.Guild.html
     /// [`Member`]: struct.Member.html
-    pub fn member<U: Into<UserId>>(&self, user_id: U) -> Result<Member> { self.id.member(user_id) }
+    #[cfg(feature = "client")]
+    pub fn member<U: Into<UserId>>(&self, cache_http: impl CacheHttp, user_id: U) -> Result<Member> {
+        self.id.member(cache_http, user_id)
+    }
 
     /// Gets a list of the guild's members.
     ///
@@ -341,9 +379,10 @@ impl PartialGuild {
     /// [`User`]'s Id.
     ///
     /// [`User`]: ../user/struct.User.html
-    pub fn members<U>(&self, limit: Option<u64>, after: Option<U>) -> Result<Vec<Member>>
-        where U: Into<UserId> {
-        self.id.members(limit, after)
+    #[cfg(feature = "http")]
+    pub fn members<U>(&self, http: impl AsRef<Http>, limit: Option<u64>, after: U) -> Result<Vec<Member>>
+        where U: Into<Option<UserId>> {
+        self.id.members(&http, limit, after)
     }
 
     /// Moves a member to a specific voice channel.
@@ -352,9 +391,10 @@ impl PartialGuild {
     ///
     /// [Move Members]: ../permissions/struct.Permissions.html#associatedconstant.MOVE_MEMBERS
     #[inline]
-    pub fn move_member<C, U>(&self, user_id: U, channel_id: C) -> Result<()>
+    #[cfg(feature = "http")]
+    pub fn move_member<C, U>(&self, http: impl AsRef<Http>, user_id: U, channel_id: C) -> Result<()>
         where C: Into<ChannelId>, U: Into<UserId> {
-        self.id.move_member(user_id, channel_id)
+        self.id.move_member(&http, user_id, channel_id)
     }
 
     /// Gets the number of [`Member`]s that would be pruned with the given
@@ -365,7 +405,8 @@ impl PartialGuild {
     /// [`Member`]: struct.Member.html
     /// [Kick Members]: ../permissions/struct.Permissions.html#associatedconstant.KICK_MEMBERS
     #[inline]
-    pub fn prune_count(&self, days: u16) -> Result<GuildPrune> { self.id.prune_count(days) }
+    #[cfg(feature = "http")]
+    pub fn prune_count(&self, http: impl AsRef<Http>, days: u16) -> Result<GuildPrune> { self.id.prune_count(&http, days) }
 
     /// Returns the Id of the shard associated with the guild.
     ///
@@ -377,9 +418,9 @@ impl PartialGuild {
     /// total, consider using [`utils::shard_id`].
     ///
     /// [`utils::shard_id`]: ../../utils/fn.shard_id.html
-    #[cfg(all(feature = "cache", feature = "utils"))]
+    #[cfg(all(feature = "cache", feature = "utils", feature = "client"))]
     #[inline]
-    pub fn shard_id(&self) -> u64 { self.id.shard_id() }
+    pub fn shard_id(&self, cache: impl AsRef<CacheRwLock>) -> u64 { self.id.shard_id(cache) }
 
     /// Returns the Id of the shard associated with the guild.
     ///
@@ -417,9 +458,10 @@ impl PartialGuild {
     /// Requires the [Manage Guild] permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn start_integration_sync<I: Into<IntegrationId>>(&self, integration_id: I) -> Result<()> {
-        self.id.start_integration_sync(integration_id)
+    pub fn start_integration_sync<I: Into<IntegrationId>>(&self, http: impl AsRef<Http>, integration_id: I) -> Result<()> {
+        self.id.start_integration_sync(&http, integration_id)
     }
 
     /// Unbans a [`User`] from the guild.
@@ -428,17 +470,19 @@ impl PartialGuild {
     ///
     /// [`User`]: ../user/struct.User.html
     /// [Ban Members]: ../permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn unban<U: Into<UserId>>(&self, user_id: U) -> Result<()> { self.id.unban(user_id) }
+    pub fn unban<U: Into<UserId>>(&self, http: impl AsRef<Http>, user_id: U) -> Result<()> { self.id.unban(&http, user_id) }
 
     /// Retrieve's the guild's vanity URL.
     ///
     /// **Note**: Requires the [Manage Guild] permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn vanity_url(&self) -> Result<String> {
-        self.id.vanity_url()
+    pub fn vanity_url(&self, http: impl AsRef<Http>) -> Result<String> {
+        self.id.vanity_url(&http)
     }
 
     /// Retrieves the guild's webhooks.
@@ -446,8 +490,9 @@ impl PartialGuild {
     /// **Note**: Requires the [Manage Webhooks] permission.
     ///
     /// [Manage Webhooks]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_WEBHOOKS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn webhooks(&self) -> Result<Vec<Webhook>> { self.id.webhooks() }
+    pub fn webhooks(&self, http: impl AsRef<Http>) -> Result<Vec<Webhook>> { self.id.webhooks(&http) }
 
     /// Obtain a reference to a role by its name.
     ///
@@ -459,15 +504,16 @@ impl PartialGuild {
     /// Obtain a reference to a [`Role`] by its name.
     ///
     /// ```rust,no_run
-    /// # #[cfg(feature="client")] {
+    /// # #[cfg(feature = "client")]
+    /// # fn main() {
     /// use serenity::model::prelude::*;
     /// use serenity::prelude::*;
     ///
     /// struct Handler;
     ///
     /// impl EventHandler for Handler {
-    ///     fn message(&self, _: Context, msg: Message) {
-    ///         let guild = msg.guild_id.unwrap().to_partial_guild().unwrap();
+    ///     fn message(&self, context: Context, msg: Message) {
+    ///         let guild = msg.guild_id.unwrap().to_partial_guild(&context.http).unwrap();
     ///         let possible_role = guild.role_by_name("role_name");
     ///
     ///         if let Some(role) = possible_role {
@@ -480,6 +526,9 @@ impl PartialGuild {
     ///
     /// client.start().unwrap();
     /// # }
+    /// #
+    /// # #[cfg(not(feature = "client"))]
+    /// # fn main() {}
     /// ```
     ///
     /// [`Role`]: ../guild/struct.Role.html

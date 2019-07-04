@@ -1,18 +1,5 @@
 //! A set of macros for easily working with internals.
 
-#[cfg(feature = "model")]
-macro_rules! request_client {
-    () => {{
-        use hyper::net::HttpsConnector;
-        use hyper_native_tls::NativeTlsClient;
-
-        let tc = NativeTlsClient::new()?;
-        let connector = HttpsConnector::new(tc);
-
-        HyperClient::with_connector(connector)
-    }}
-}
-
 #[cfg(any(feature = "model", feature = "utils"))]
 macro_rules! cdn {
     ($e:expr) => {
@@ -79,7 +66,7 @@ macro_rules! enum_number {
                 impl<'de> ::serde::de::Visitor<'de> for Visitor {
                     type Value = $name;
 
-                    fn expecting(&self, formatter: &mut ::std::fmt::Formatter)
+                    fn expecting(&self, formatter: &mut ::std::fmt::Formatter<'_>)
                         -> ::std::fmt::Result {
                         formatter.write_str("positive integer")
                     }

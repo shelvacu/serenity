@@ -1,11 +1,13 @@
-use model::{
-    gateway::Game,
+use crate::model::{
+    gateway::Activity,
+    id::GuildId,
     user::OnlineStatus,
-    id::GuildId
 };
-use websocket::message::OwnedMessage;
+use tungstenite::Message;
 
 /// A message to send from a shard over a WebSocket.
+// Once we can use `Box` as part of a pattern, we will reconsider boxing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum ShardRunnerMessage {
     /// Indicates that the client is to send a member chunk message.
@@ -37,12 +39,12 @@ pub enum ShardRunnerMessage {
     /// [`ShardManager`]: struct.ShardManager.html
     Close(u16, Option<String>),
     /// Indicates that the client is to send a custom WebSocket message.
-    Message(OwnedMessage),
-    /// Indicates that the client is to update the shard's presence's game.
-    SetGame(Option<Game>),
+    Message(Message),
+    /// Indicates that the client is to update the shard's presence's activity.
+    SetActivity(Option<Activity>),
     /// Indicates that the client is to update the shard's presence in its
-    /// entirety.
-    SetPresence(OnlineStatus, Option<Game>),
+    /// entirity.
+    SetPresence(OnlineStatus, Option<Activity>),
     /// Indicates that the client is to update the shard's presence's status.
     SetStatus(OnlineStatus),
 }

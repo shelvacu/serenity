@@ -1,19 +1,21 @@
-use model::prelude::*;
+use crate::model::prelude::*;
 use std::cmp::Ordering;
 
 #[cfg(all(feature = "builder", feature = "cache", feature = "model"))]
-use builder::EditRole;
+use crate::builder::EditRole;
 #[cfg(all(feature = "cache", feature = "model"))]
-use internal::prelude::*;
-#[cfg(all(feature = "cache", feature = "model"))]
-use {CACHE, Cache, http};
+use crate::internal::prelude::*;
+#[cfg(feature = "cache")]
+use crate::cache::CacheRwLock;
 
 #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
-use std::str::FromStr;
+use crate::cache::FromStrAndCache;
 #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
-use model::misc::RoleParseError;
+use crate::model::misc::RoleParseError;
 #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
-use utils::parse_role;
+use crate::utils::parse_role;
+#[cfg(all(feature = "cache", feature = "http"))]
+use crate::http::raw::Http;
 
 /// Information about a role within a guild. A role represents a set of
 /// permissions, and can be attached to one or multiple users. A role has
@@ -64,6 +66,8 @@ pub struct Role {
     ///
     /// The `@everyone` role is usually either `-1` or `0`.
     pub position: i64,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
@@ -73,9 +77,13 @@ impl Role {
     /// **Note** Requires the [Manage Roles] permission.
     ///
     /// [Manage Roles]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_ROLES
-    #[cfg(feature = "cache")]
+    #[cfg(all(feature = "cache", feature = "http"))]
     #[inline]
-    pub fn delete(&self) -> Result<()> { http::delete_role(self.find_guild()?.0, self.id.0) }
+    pub fn delete<T>(&mut self, cache_and_http: T) -> Result<()>
+    where T: AsRef<CacheRwLock> + AsRef<Http> {
+        AsRef::<Http>::as_ref(&cache_and_http)
+            .delete_role(self.find_guild(&cache_and_http)?.0, self.id.0)
+    }
 
     /// Edits a [`Role`], optionally setting its new fields.
     ///
@@ -85,22 +93,26 @@ impl Role {
     ///
     /// Make a role hoisted:
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// # use serenity::model::id::RoleId;
-    /// # let role = RoleId(7).to_role_cached().unwrap();
+    /// # let role = RoleId(7).to_role_cached(&cache).unwrap();
     /// // assuming a `role` has already been bound
     //
-    /// role.edit(|r| r.hoist(true));
+    /// role.edit(|mut r| {
+    ///     r.hoist(true);
+    ///
+    ///     r
+    /// });
     /// ```
     ///
     /// [`Role`]: struct.Role.html
     /// [Manage Roles]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_ROLES
-    #[cfg(all(feature = "builder", feature = "cache"))]
-    pub fn edit<F: FnOnce(EditRole) -> EditRole>(&self, f: F) -> Result<Role> {
-        self.find_guild()
-            .and_then(|guild_id| guild_id.edit_role(self.id, f))
+    #[cfg(all(feature = "builder", feature = "cache", feature = "http"))]
+    pub fn edit<F: FnOnce(&mut EditRole) -> &mut EditRole, T>(&self, cache_and_http: T, f: F) -> Result<Role>
+    where T: AsRef<CacheRwLock> + AsRef<Http> {
+        self.find_guild(&cache_and_http)
+            .and_then(|guild_id| guild_id.edit_role(&cache_and_http, self.id, f))
     }
-
     /// Searches the cache for the guild that owns the role.
     ///
     /// # Errors
@@ -110,8 +122,8 @@ impl Role {
     ///
     /// [`ModelError::GuildNotFound`]: ../error/enum.Error.html#variant.GuildNotFound
     #[cfg(feature = "cache")]
-    pub fn find_guild(&self) -> Result<GuildId> {
-        for guild in CACHE.read().guilds.values() {
+    pub fn find_guild(&self, cache: impl AsRef<CacheRwLock>) -> Result<GuildId> {
+        for guild in cache.as_ref().read().guilds.values() {
             let guild = guild.read();
 
             if guild.roles.contains_key(&RoleId(self.id.0)) {
@@ -145,7 +157,7 @@ impl Role {
 impl Display for Role {
     /// Format a mention for the role, pinging its members.
     // This is in the format of: `<@&ROLE_ID>`.
-    fn fmt(&self, f: &mut Formatter) -> FmtResult { Display::fmt(&self.mention(), f) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult { Display::fmt(&self.mention(), f) }
 }
 
 impl Eq for Role {}
@@ -170,24 +182,17 @@ impl PartialOrd for Role {
 
 #[cfg(feature = "model")]
 impl RoleId {
-    /// Search the cache for the role.
-    #[cfg(feature = "cache")]
-    #[deprecated(since = "0.5.8", note = "Use the `to_role_cached`-method instead.")]
-    pub fn find(&self) -> Option<Role> {
-        self.to_role_cached()
-    }
-
     /// Tries to find the [`Role`] by its Id in the cache.
     ///
     /// [`Role`]: ../guild/struct.Role.html
     #[cfg(feature = "cache")]
-    pub fn to_role_cached(self) -> Option<Role> {
-        self._to_role_cached(&CACHE)
+    pub fn to_role_cached(self, cache: impl AsRef<CacheRwLock>) -> Option<Role> {
+        self._to_role_cached(&cache)
     }
 
     #[cfg(feature = "cache")]
-    pub(crate) fn _to_role_cached(self, cache: &RwLock<Cache>) -> Option<Role> {
-        for guild in cache.read().guilds.values() {
+    pub(crate) fn _to_role_cached(self, cache: impl AsRef<CacheRwLock>) -> Option<Role> {
+        for guild in cache.as_ref().read().guilds.values() {
             let guild = guild.read();
 
             if !guild.roles.contains_key(&self) {
@@ -214,12 +219,12 @@ impl<'a> From<&'a Role> for RoleId {
 }
 
 #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
-impl FromStr for Role {
+impl FromStrAndCache for Role {
     type Err = RoleParseError;
 
-    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
+    fn from_str(cache: impl AsRef<CacheRwLock>, s: &str) -> StdResult<Self, Self::Err> {
         match parse_role(s) {
-            Some(x) => match RoleId(x).to_role_cached() {
+            Some(x) => match RoleId(x).to_role_cached(&cache) {
                 Some(role) => Ok(role),
                 _ => Err(RoleParseError::NotPresentInCache),
             },

@@ -30,38 +30,108 @@ pub mod routing;
 
 mod error;
 
-pub use hyper::status::{StatusClass, StatusCode};
+pub use reqwest::StatusCode;
 pub use self::error::Error as HttpError;
 pub use self::raw::*;
 
-use hyper::{
-    client::Client as HyperClient,
-    method::Method,
-    net::HttpsConnector,
+use reqwest::{
+    Method,
 };
-use hyper_native_tls::NativeTlsClient;
-use model::prelude::*;
-use parking_lot::Mutex;
+use crate::model::prelude::*;
 use self::{request::Request};
 use std::{
-    default::Default,
     fs::File,
     path::{Path, PathBuf},
-    sync::Arc
 };
 
-lazy_static! {
-    static ref CLIENT: HyperClient = {
-        let tc = NativeTlsClient::new().expect("Unable to make http client");
-        let connector = HttpsConnector::new(tc);
+#[cfg(feature = "cache")]
+use crate::cache::CacheRwLock;
+#[cfg(feature = "client")]
+use crate::client::Context;
 
-        HyperClient::with_connector(connector)
-    };
+/// This trait will be required by functions that need [`Http`] and can
+/// optionally use a [`CacheRwLock`] to potentially avoid REST-requests.
+///
+/// The types [`Context`], [`CacheRwLock`], and [`Http`] implement this trait
+/// and thus passing these to functions expecting `impl CacheHttp` is possible.
+///
+/// In a situation where you have the `cache`-feature enabled but you do not
+/// pass a cache, the function will behave as if no `cache`-feature is active.
+///
+/// If you are calling a function that expects `impl CacheHttp` as argument
+/// and you wish to utilise the `cache`-feature but you got no access to a
+/// [`Context`], you can pass a tuple of `(CacheRwLock, Http)`.
+///
+/// [`CacheRwLock`]: ../cache/struct.CacheRwLock.html
+/// [`Http`]: raw/struct.Http.html
+/// [`Context`]: ../client/struct.Context.html
+pub trait CacheHttp {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http;
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { None }
+}
+
+#[cfg(feature = "client")]
+impl CacheHttp for Context {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { &self.http }
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.cache) }
+}
+
+#[cfg(feature = "client")]
+impl CacheHttp for &Context {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { &self.http }
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.cache) }
+}
+
+#[cfg(feature = "client")]
+impl CacheHttp for &mut Context {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { &self.http }
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.cache) }
+}
+
+#[cfg(feature = "client")]
+impl CacheHttp for &&mut Context {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { &self.http }
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.cache) }
+}
+
+#[cfg(all(feature = "cache", feature = "http"))]
+impl CacheHttp for (&CacheRwLock, &Http) {
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.0) }
+    fn http(&self) -> &Http { &self.1 }
+}
+
+impl CacheHttp for &Http {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { *self }
+}
+
+#[cfg(all(feature = "cache", feature = "http"))]
+impl AsRef<CacheRwLock> for (&CacheRwLock, &Http) {
+    fn as_ref(&self) -> &CacheRwLock {
+        self.0
+    }
+}
+
+#[cfg(feature = "cache")]
+impl AsRef<Http> for (&CacheRwLock, &Http) {
+    fn as_ref(&self) -> &Http {
+        self.1
+    }
 }
 
 /// An method used for ratelimiting special routes.
 ///
-/// This is needed because `hyper`'s `Method` enum does not derive Copy.
+/// This is needed because `reqwest`'s `Method` enum does not derive Copy.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LightMethod {
     /// Indicates that a route is for the `DELETE` method only.
@@ -77,22 +147,19 @@ pub enum LightMethod {
 }
 
 impl LightMethod {
-    pub fn hyper_method(&self) -> Method {
-        match *self {
-            LightMethod::Delete => Method::Delete,
-            LightMethod::Get => Method::Get,
-            LightMethod::Patch => Method::Patch,
-            LightMethod::Post => Method::Post,
-            LightMethod::Put => Method::Put,
+    pub fn reqwest_method(self) -> Method {
+        match self {
+            LightMethod::Delete => Method::DELETE,
+            LightMethod::Get => Method::GET,
+            LightMethod::Patch => Method::PATCH,
+            LightMethod::Post => Method::POST,
+            LightMethod::Put => Method::PUT,
         }
     }
 }
 
-lazy_static! {
-    static ref TOKEN: Arc<Mutex<String>> = Arc::new(Mutex::new(String::default()));
-}
-
 /// Enum that allows a user to pass a `Path` or a `File` type to `send_files`
+#[derive(Clone, Debug)]
 pub enum AttachmentType<'a> {
     /// Indicates that the `AttachmentType` is a byte slice with a filename.
     Bytes((&'a [u8], &'a str)),
@@ -100,24 +167,26 @@ pub enum AttachmentType<'a> {
     File((&'a File, &'a str)),
     /// Indicates that the `AttachmentType` is a `Path`
     Path(&'a Path),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl<'a> From<(&'a [u8], &'a str)> for AttachmentType<'a> {
-    fn from(params: (&'a [u8], &'a str)) -> AttachmentType { AttachmentType::Bytes(params) }
+    fn from(params: (&'a [u8], &'a str)) -> AttachmentType<'_> { AttachmentType::Bytes(params) }
 }
 
 impl<'a> From<&'a str> for AttachmentType<'a> {
-    fn from(s: &'a str) -> AttachmentType { AttachmentType::Path(Path::new(s)) }
+    fn from(s: &'a str) -> AttachmentType<'_> { AttachmentType::Path(Path::new(s)) }
 }
 
 impl<'a> From<&'a Path> for AttachmentType<'a> {
-    fn from(path: &'a Path) -> AttachmentType {
+    fn from(path: &'a Path) -> AttachmentType<'_> {
         AttachmentType::Path(path)
     }
 }
 
 impl<'a> From<&'a PathBuf> for AttachmentType<'a> {
-    fn from(pathbuf: &'a PathBuf) -> AttachmentType { AttachmentType::Path(pathbuf.as_path()) }
+    fn from(pathbuf: &'a PathBuf) -> AttachmentType<'_> { AttachmentType::Path(pathbuf.as_path()) }
 }
 
 impl<'a> From<(&'a File, &'a str)> for AttachmentType<'a> {
@@ -133,6 +202,8 @@ pub enum GuildPagination {
     After(GuildId),
     /// The Id to get the guilds before.
     Before(GuildId),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 #[cfg(test)]

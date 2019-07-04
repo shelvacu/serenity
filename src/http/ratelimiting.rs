@@ -38,77 +38,36 @@
 //! differentiating between different ratelimits.
 //!
 //! [Taken from]: https://discordapp.com/developers/docs/topics/rate-limits#rate-limits
-#![allow(zero_ptr)]
-
 pub use super::routing::Route;
 
 use chrono::{DateTime, Utc};
-use hyper::client::Response;
-use hyper::header::Headers;
-use hyper::status::StatusCode;
-use internal::prelude::*;
+use reqwest::{
+    Response,
+    header::HeaderMap,
+    StatusCode,
+};
+use crate::internal::prelude::*;
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
     sync::Arc,
     time::Duration,
     str,
     thread,
-    i64
+    i64,
 };
-use super::{HttpError, Request};
+use super::{Http, HttpError, Request};
+use log::debug;
 
 /// Refer to [`offset`].
 ///
 /// [`offset`]: fn.offset.html
 static mut OFFSET: Option<i64> = None;
 
-lazy_static! {
-    /// The global mutex is a mutex unlocked and then immediately re-locked
-    /// prior to every request, to abide by Discord's global ratelimit.
-    ///
-    /// The global ratelimit is the total number of requests that may be made
-    /// across the entirety of the API within an amount of time. If this is
-    /// reached, then the global mutex is unlocked for the amount of time
-    /// present in the "Retry-After" header.
-    ///
-    /// While locked, all requests are blocked until each request can acquire
-    /// the lock.
-    ///
-    /// The only reason that you would need to use the global mutex is to
-    /// block requests yourself. This has the side-effect of potentially
-    /// blocking many of your event handlers or framework commands.
-    pub static ref GLOBAL: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
-    /// The routes mutex is a HashMap of each [`Route`] and their respective
-    /// ratelimit information.
-    ///
-    /// See the documentation for [`RateLimit`] for more information on how the
-    /// library handles ratelimiting.
-    ///
-    /// # Examples
-    ///
-    /// View the `reset` time of the route for `ChannelsId(7)`:
-    ///
-    /// ```rust,no_run
-    /// use serenity::http::ratelimiting::{ROUTES, Route};
-    ///
-    /// if let Some(route) = ROUTES.lock().get(&Route::ChannelsId(7)) {
-    ///     println!("Reset time at: {}", route.lock().reset);
-    /// }
-    /// ```
-    ///
-    /// [`RateLimit`]: struct.RateLimit.html
-    /// [`Route`]: ../routing/enum.Route.html
-    pub static ref ROUTES: Arc<Mutex<HashMap<Route, Arc<Mutex<RateLimit>>>>> = {
-        Arc::new(Mutex::new(HashMap::default()))
-    };
-}
-
-pub(super) fn perform(req: Request) -> Result<Response> {
+pub(super) fn perform(http: &Http, req: Request<'_>) -> Result<Response> {
     loop {
-        // This will block if another thread already has the global
-        // unlocked already (due to receiving an x-ratelimit-global).
-        let _ = GLOBAL.lock();
+        // This will block if another thread is trying to send
+        // an HTTP-request already (due to receiving an x-ratelimit-global).
+        let _ = http.limiter.lock();
 
         // Destructure the tuple instead of retrieving the third value to
         // take advantage of the type system. If `RouteInfo::deconstruct`
@@ -128,7 +87,7 @@ pub(super) fn perform(req: Request) -> Result<Response> {
         // - get the global rate;
         // - sleep if there is 0 remaining
         // - then, perform the request
-        let bucket = Arc::clone(ROUTES
+        let bucket = Arc::clone(http.routes
             .lock()
             .entry(route)
             .or_insert_with(|| {
@@ -142,7 +101,7 @@ pub(super) fn perform(req: Request) -> Result<Response> {
         let mut lock = bucket.lock();
         lock.pre_hook(&route);
 
-        let response = super::raw::retry(&req)?;
+        let response = http.retry(&req)?;
 
         // Check if an offset has been calculated yet to determine the time
         // difference from Discord can the client.
@@ -152,7 +111,7 @@ pub(super) fn perform(req: Request) -> Result<Response> {
         // This should probably only be a one-time check, although we may want
         // to choose to check this often in the future.
         if unsafe { OFFSET }.is_none() {
-            calculate_offset(response.headers.get_raw("date"));
+            calculate_offset(&response.headers().get("date").and_then(|d| Some(d.as_bytes())));
         }
 
         // Check if the request got ratelimited by checking for status 429,
@@ -171,11 +130,11 @@ pub(super) fn perform(req: Request) -> Result<Response> {
         if route == Route::None {
             return Ok(response);
         } else {
-            let redo = if response.headers.get_raw("x-ratelimit-global").is_some() {
-                let _ = GLOBAL.lock();
+            let redo = if response.headers().get("x-ratelimit-global").is_some() {
+                let _ = http.limiter.lock();
 
                 Ok(
-                    if let Some(retry_after) = parse_header(&response.headers, "retry-after")? {
+                    if let Some(retry_after) = parse_header(&response.headers(), "retry-after")? {
                         debug!("Ratelimited on route {:?} for {:?}ms", route, retry_after);
                         thread::sleep(Duration::from_millis(retry_after as u64));
 
@@ -196,14 +155,14 @@ pub(super) fn perform(req: Request) -> Result<Response> {
 }
 
 /// A set of data containing information about the ratelimits for a particular
-/// [`Route`], which is stored in the [`ROUTES`] mutex.
+/// [`Route`], which is stored in [`Http`].
 ///
 /// See the [Discord docs] on ratelimits for more information.
 ///
 /// **Note**: You should _not_ mutate any of the fields, as this can help cause
 /// 429s.
 ///
-/// [`ROUTES`]: struct.ROUTES.html
+/// [`Http`]: ../raw/struct.Http.html#structfield.routes
 /// [`Route`]: ../routing/enum.Route.html
 /// [Discord docs]: https://discordapp.com/developers/docs/topics/rate-limits
 #[derive(Clone, Debug, Default)]
@@ -240,13 +199,14 @@ impl RateLimit {
         let diff = (self.reset - current_time) as u64;
 
         if self.remaining == 0 {
-            let delay = (diff * 1000) + 500;
+            let delay = diff * 1000;
 
             debug!(
                 "Pre-emptive ratelimit on route {:?} for {:?}ms",
                 route,
                 delay
             );
+			
             thread::sleep(Duration::from_millis(delay));
 
             return;
@@ -256,21 +216,21 @@ impl RateLimit {
     }
 
     pub(crate) fn post_hook(&mut self, response: &Response, route: &Route) -> Result<bool> {
-        if let Some(limit) = parse_header(&response.headers, "x-ratelimit-limit")? {
+        if let Some(limit) = parse_header(&response.headers(), "x-ratelimit-limit")? {
             self.limit = limit;
         }
 
-        if let Some(remaining) = parse_header(&response.headers, "x-ratelimit-remaining")? {
+        if let Some(remaining) = parse_header(&response.headers(), "x-ratelimit-remaining")? {
             self.remaining = remaining;
         }
 
-        if let Some(reset) = parse_header(&response.headers, "x-ratelimit-reset")? {
+        if let Some(reset) = parse_header(&response.headers(), "x-ratelimit-reset")? {
             self.reset = reset;
         }
 
-        Ok(if response.status != StatusCode::TooManyRequests {
+        Ok(if response.status() != StatusCode::TOO_MANY_REQUESTS {
             false
-        } else if let Some(retry_after) = parse_header(&response.headers, "retry-after")? {
+        } else if let Some(retry_after) = parse_header(&response.headers(), "retry-after")? {
             debug!("Ratelimited on route {:?} for {:?}ms", route, retry_after);
             thread::sleep(Duration::from_millis(retry_after as u64));
 
@@ -302,20 +262,18 @@ pub fn offset() -> Option<i64> {
     unsafe { OFFSET }
 }
 
-fn calculate_offset(header: Option<&[Vec<u8>]>) {
+fn calculate_offset(header: &Option<&[u8]>) {
     // Get the current time as soon as possible.
     let now = Utc::now().timestamp();
 
-    // First get the `Date` header's value and parse it as UTF8.
-    let header = header
-        .and_then(|h| h.get(0))
-        .and_then(|x| str::from_utf8(x).ok());
+    let header = header.and_then(|x| str::from_utf8(x).ok());
 
-    if let Some(date) = header {
+    if let Some(header) = header {
         // Replace the `GMT` timezone with an offset, and then parse it
         // into a chrono DateTime. If it parses correctly, calculate the
         // diff and then set it as the offset.
-        let s = date.replace("GMT", "+0000");
+        let s = header.replace("GMT", "+0000");
+
         let parsed = DateTime::parse_from_str(&s, "%a, %d %b %Y %T %z");
 
         if let Ok(parsed) = parsed {
@@ -330,16 +288,111 @@ fn calculate_offset(header: Option<&[Vec<u8>]>) {
             }
         }
     }
+
 }
 
-fn parse_header(headers: &Headers, header: &str) -> Result<Option<i64>> {
-    headers.get_raw(header).map_or(Ok(None), |header| {
-        str::from_utf8(&header[0])
-            .map_err(|_| Error::Http(HttpError::RateLimitUtf8))
-            .and_then(|v| {
-                v.parse::<i64>()
-                    .map(Some)
-                    .map_err(|_| Error::Http(HttpError::RateLimitI64))
-            })
-    })
+fn parse_header(headers: &HeaderMap, header: &str) -> Result<Option<i64>> {
+    let header = match headers.get(header) {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+
+    let unicode = str::from_utf8(&header.as_bytes()).map_err(|_| {
+        Error::from(HttpError::RateLimitUtf8)
+    })?;
+
+    let num = unicode.parse().map_err(|_| {
+        Error::from(HttpError::RateLimitI64)
+    })?;
+
+    Ok(Some(num))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::Error,
+        http::HttpError,
+    };
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+    use std::{
+        error::Error as StdError,
+        result::Result as StdResult,
+    };
+    use super::parse_header;
+
+    type Result<T> = StdResult<T, Box<dyn StdError>>;
+
+    fn headers() -> HeaderMap {
+        let pairs = &[
+            (
+                HeaderName::from_static("x-ratelimit-limit"),
+                HeaderValue::from_static("5"),
+            ),
+            (
+                HeaderName::from_static("x-ratelimit-remaining"),
+                HeaderValue::from_static("4"),
+            ),
+            (
+                HeaderName::from_static("x-ratelimit-reset"),
+                HeaderValue::from_static("1560704880"),
+            ),
+            (
+                HeaderName::from_static("x-bad-num"),
+                HeaderValue::from_static("abc"),
+            ),
+            (
+                HeaderName::from_static("x-bad-unicode"),
+                HeaderValue::from_bytes(&[255, 255, 255, 255]).unwrap(),
+            ),
+        ];
+
+        let mut map = HeaderMap::with_capacity(pairs.len());
+
+        for (name, val) in pairs.into_iter() {
+            map.insert(name, val.to_owned());
+        }
+
+        map
+    }
+
+    #[test]
+    fn test_parse_header_good() -> Result<()> {
+        let headers = headers();
+
+        assert_eq!(parse_header(&headers, "x-ratelimit-limit")?.unwrap(), 5);
+        assert_eq!(
+            parse_header(&headers, "x-ratelimit-remaining")?.unwrap(),
+            4,
+        );
+        assert_eq!(
+            parse_header(&headers, "x-ratelimit-reset")?.unwrap(),
+            1_560_704_880,
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_header_errors() -> Result<()> {
+        let headers = headers();
+
+        match parse_header(&headers, "x-bad-num").unwrap_err() {
+            Error::Http(x) => match *x {
+                HttpError::RateLimitI64 => assert!(true),
+                _ => assert!(false),
+            },
+            _ => assert!(false),
+        }
+
+        match parse_header(&headers, "x-bad-unicode").unwrap_err() {
+            Error::Http(http_err) => match *http_err {
+                HttpError::RateLimitUtf8 => assert!(true),
+                _ => assert!(false),
+            },
+            _ => assert!(false),
+        }
+
+        Ok(())
+    }
 }

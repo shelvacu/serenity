@@ -1,4 +1,6 @@
-use model::prelude::*;
+#[cfg(feature = "http")]
+use crate::http::CacheHttp;
+use crate::{model::prelude::*};
 use serde::de::{Deserialize, Error as DeError, MapAccess, Visitor};
 use serde::ser::{SerializeMap, Serialize, Serializer};
 use std::{
@@ -11,12 +13,13 @@ use std::{
     },
     str::FromStr
 };
-use internal::prelude::*;
 
-#[cfg(all(feature = "cache", feature = "model"))]
-use CACHE;
-#[cfg(feature = "model")]
-use http;
+use crate::internal::prelude::*;
+
+#[cfg(feature = "http")]
+use crate::http::Http;
+#[cfg(all(feature = "http", feature = "model"))]
+use log::warn;
 
 /// An emoji reaction to a message.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -36,6 +39,8 @@ pub struct Reaction {
     ///
     /// [`User`]: ../user/struct.User.html
     pub user_id: UserId,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
@@ -50,8 +55,9 @@ impl Reaction {
     ///
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
     #[inline]
-    pub fn channel(&self) -> Result<Channel> {
-        self.channel_id.to_channel()
+    #[cfg(feature = "http")]
+    pub fn channel(&self, cache_http: impl CacheHttp) -> Result<Channel> {
+        self.channel_id.to_channel(cache_http)
     }
 
     /// Deletes the reaction, but only if the current user is the user who made
@@ -69,36 +75,30 @@ impl Reaction {
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
     /// [permissions]: ../permissions/index.html
-    pub fn delete(&self) -> Result<()> {
-        let user_id = feature_cache! {
-            {
-                let user = if self.user_id == CACHE.read().user.id {
-                    None
-                } else {
-                    Some(self.user_id.0)
-                };
+    #[cfg(feature = "http")]
+    pub fn delete(&self, cache_http: impl CacheHttp) -> Result<()> {
 
-                // If the reaction is one _not_ made by the current user, then ensure
-                // that the current user has permission* to delete the reaction.
-                //
-                // Normally, users can only delete their own reactions.
-                //
-                // * The `Manage Messages` permission.
-                if user.is_some() {
+        let mut user_id = Some(self.user_id.0);
+
+        #[cfg(feature = "cache")]
+        {
+            if let Some(cache) = cache_http.cache() {
+
+                if self.user_id == cache.read().user.id {
+                    user_id = None;
+                }
+
+                if user_id.is_some() {
                     let req = Permissions::MANAGE_MESSAGES;
 
-                    if !utils::user_has_perms(self.channel_id, req).unwrap_or(true) {
+                    if !utils::user_has_perms(cache, self.channel_id, req).unwrap_or(true) {
                         return Err(Error::Model(ModelError::InvalidPermissions(req)));
                     }
                 }
-
-                user
-            } else {
-                Some(self.user_id.0)
             }
-        };
+        }
 
-        http::delete_reaction(self.channel_id.0, self.message_id.0, user_id, &self.emoji)
+        cache_http.http().delete_reaction(self.channel_id.0, self.message_id.0, user_id, &self.emoji)
     }
 
     /// Retrieves the [`Message`] associated with this reaction.
@@ -111,9 +111,10 @@ impl Reaction {
     ///
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
     /// [`Message`]: struct.Message.html
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn message(&self) -> Result<Message> {
-        self.channel_id.message(self.message_id)
+    pub fn message(&self, http: impl AsRef<Http>) -> Result<Message> {
+        self.channel_id.message(&http, self.message_id)
     }
 
     /// Retrieves the user that made the reaction.
@@ -122,8 +123,9 @@ impl Reaction {
     /// If not - or the user was not found - this will perform a request over
     /// the REST API for the user.
     #[inline]
-    pub fn user(&self) -> Result<User> {
-        self.user_id.to_user()
+    #[cfg(feature = "http")]
+    pub fn user(&self, cache_http: impl CacheHttp) -> Result<User> {
+        self.user_id.to_user(cache_http)
     }
 
     /// Retrieves the list of [`User`]s who have reacted to a [`Message`] with a
@@ -151,28 +153,34 @@ impl Reaction {
     /// [`User`]: ../user/struct.User.html
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
     /// [permissions]: ../permissions/index.html
+    #[cfg(feature = "http")]
     #[inline]
     pub fn users<R, U>(&self,
+                       http: impl AsRef<Http>,
                        reaction_type: R,
                        limit: Option<u8>,
                        after: Option<U>)
                        -> Result<Vec<User>>
         where R: Into<ReactionType>, U: Into<UserId> {
-        self._users(&reaction_type.into(), limit, after.map(Into::into))
+        self._users(&http, &reaction_type.into(), limit, after.map(Into::into))
     }
 
+    #[cfg(feature = "http")]
     fn _users(
         &self,
+        http: impl AsRef<Http>,
         reaction_type: &ReactionType,
         limit: Option<u8>,
         after: Option<UserId>,
     ) -> Result<Vec<User>> {
         let mut limit = limit.unwrap_or(50);
+
         if limit > 100 {
             limit = 100;
             warn!("Rection users limit clamped to 100! (API Restriction)");
         }
-        http::get_reaction_users(
+
+        http.as_ref().get_reaction_users(
             self.channel_id.0,
             self.message_id.0,
             reaction_type,
@@ -205,6 +213,8 @@ pub enum ReactionType {
     },
     /// A reaction with a twemoji.
     Unicode(String),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl<'de> Deserialize<'de> for ReactionType {
@@ -222,7 +232,7 @@ impl<'de> Deserialize<'de> for ReactionType {
         impl<'de> Visitor<'de> for ReactionTypeVisitor {
             type Value = ReactionType;
 
-            fn expecting(&self, formatter: &mut Formatter) -> FmtResult {
+            fn expecting(&self, formatter: &mut Formatter<'_>) -> FmtResult {
                 formatter.write_str("enum ReactionType")
             }
 
@@ -298,6 +308,7 @@ impl Serialize for ReactionType {
 
                 map.end()
             },
+            ReactionType::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -318,6 +329,7 @@ impl ReactionType {
                 ..
             } => format!("{}:{}", name.as_ref().map_or("", |s| s.as_str()), id),
             ReactionType::Unicode(ref unicode) => unicode.clone(),
+            ReactionType::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -331,19 +343,22 @@ impl From<char> for ReactionType {
     /// Reacting to a message with an apple:
     ///
     /// ```rust,no_run
+    /// # #[cfg(feature = "client")]
+    /// # use serenity::client::Context;
+    /// # #[cfg(feature = "framework")]
+    /// # use serenity::framework::standard::{CommandResult, macros::command};
     /// # use serenity::model::id::ChannelId;
-    /// # use std::error::Error;
     /// #
-    /// # fn try_main() -> Result<(), Box<Error>> {
-    /// #     let message = ChannelId(0).message(0)?;
+    /// # #[cfg(all(feature = "client", feature = "framework", feature = "http"))]
+    /// # #[command]
+    /// # fn example(ctx: &mut Context) -> CommandResult {
+    /// #   let message = ChannelId(0).message(&ctx.http, 0)?;
     /// #
-    /// message.react('🍎')?;
-    /// #     Ok(())
+    /// message.react(ctx, '🍎')?;
+    /// # Ok(())
     /// # }
     /// #
-    /// # fn main() {
-    /// #     try_main().unwrap();
-    /// # }
+    /// # fn main() {}
     /// ```
     fn from(ch: char) -> ReactionType { ReactionType::Unicode(ch.to_string()) }
 }
@@ -403,12 +418,11 @@ impl<'a> From<&'a str> for ReactionType {
 }
 
 // TODO: Change this to `!` once it becomes stable.
-
 #[derive(Debug)]
 pub enum NeverFails {}
 
 impl Display for NeverFails {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "never fails")
     }
 }
@@ -439,7 +453,7 @@ impl Display for ReactionType {
     /// [`Emoji::fmt`]: ../guild/struct.Emoji.html#method.fmt
     /// [`ReactionType::Custom`]: enum.ReactionType.html#variant.Custom
     /// [`ReactionType::Unicode`]: enum.ReactionType.html#variant.Unicode
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match *self {
             ReactionType::Custom {
                 id,
@@ -454,6 +468,7 @@ impl Display for ReactionType {
                 f.write_char('>')
             },
             ReactionType::Unicode(ref unicode) => f.write_str(unicode),
+            ReactionType::__Nonexhaustive => unreachable!(),
         }
     }
 }

@@ -1,6 +1,6 @@
-use internal::prelude::*;
-use utils::VecMap;
-use model::id::ChannelId;
+use crate::internal::prelude::*;
+use crate::model::id::ChannelId;
+use std::collections::HashMap;
 
 /// A builder to edit a [`GuildChannel`] for use via [`GuildChannel::edit`]
 ///
@@ -20,7 +20,7 @@ use model::id::ChannelId;
 /// [`GuildChannel`]: ../model/channel/struct.GuildChannel.html
 /// [`GuildChannel::edit`]: ../model/channel/struct.GuildChannel.html#method.edit
 #[derive(Clone, Debug, Default)]
-pub struct EditChannel(pub VecMap<&'static str, Value>);
+pub struct EditChannel(pub HashMap<&'static str, Value>);
 
 impl EditChannel {
     /// The bitrate of the channel in bits.
@@ -28,25 +28,22 @@ impl EditChannel {
     /// This is for [voice] channels only.
     ///
     /// [voice]: ../model/channel/enum.ChannelType.html#variant.Voice
-    pub fn bitrate(mut self, bitrate: u64) -> Self {
+    pub fn bitrate(&mut self, bitrate: u64) -> &mut Self {
         self.0.insert("bitrate", Value::Number(Number::from(bitrate)));
-
         self
     }
 
     /// The name of the channel.
     ///
     /// Must be between 2 and 100 characters long.
-    pub fn name(mut self, name: &str) -> Self {
+    pub fn name<S: ToString>(&mut self, name: S) -> &mut Self {
         self.0.insert("name", Value::String(name.to_string()));
-
         self
     }
 
     /// The position of the channel in the channel list.
-    pub fn position(mut self, position: u64) -> Self {
+    pub fn position(&mut self, position: u64) -> &mut Self {
         self.0.insert("position", Value::Number(Number::from(position)));
-
         self
     }
 
@@ -57,8 +54,18 @@ impl EditChannel {
     /// This is for [text] channels only.
     ///
     /// [text]: ../model/channel/enum.ChannelType.html#variant.Text
-    pub fn topic(mut self, topic: &str) -> Self {
+    pub fn topic<S: ToString>(&mut self, topic: S) -> &mut Self {
         self.0.insert("topic", Value::String(topic.to_string()));
+        self
+    }
+
+    /// Is the channel inappropriate for work?
+    ///
+    /// This is for [text] channels only.
+    ///
+    /// [text]: ../model/channel/enum.ChannelType.html#variant.Text
+    pub fn nsfw(&mut self, nsfw: bool) -> &mut Self {
+        self.0.insert("nsfw", Value::Bool(nsfw));
 
         self
     }
@@ -79,9 +86,8 @@ impl EditChannel {
     /// This is for [voice] channels only.
     ///
     /// [voice]: ../model/channel/enum.ChannelType.html#variant.Voice
-    pub fn user_limit(mut self, user_limit: u64) -> Self {
+    pub fn user_limit(&mut self, user_limit: u64) -> &mut Self {
         self.0.insert("user_limit", Value::Number(Number::from(user_limit)));
-
         self
     }
 
@@ -92,15 +98,24 @@ impl EditChannel {
     /// [text]: ../model/channel/enum.ChannelType.html#variant.Text
     /// [voice]: ../model/channel/enum.ChannelType.html#variant.Voice
     #[inline]
-    pub fn category<C: Into<Option<ChannelId>>>(self, category: C) -> Self {
-        self._category(category.into())
+    pub fn category<C: Into<Option<ChannelId>>>(&mut self, category: C) -> &mut Self {
+        self._category(category.into());
+        self
     }
 
-    fn _category(mut self, category: Option<ChannelId>) -> Self {
+    fn _category(&mut self, category: Option<ChannelId>) {
         self.0.insert("parent_id", match category {
             Some(c) => Value::Number(Number::from(c.0)),
             None => Value::Null
         });
+    }
+
+    /// The seconds a user has to wait before sending another message.
+    ///
+    /// **Info**: Only values from 0 to 120 are valid.
+    #[inline]
+    pub fn slow_mode_rate(&mut self, seconds: u64) -> &mut Self {
+        self.0.insert("rate_limit_per_user", Value::Number(Number::from(seconds)));
 
         self
     }

@@ -25,51 +25,6 @@
 //! need to be sure that some information piece is sanctioned by Discord, refer
 //! to their own documentation.
 //!
-//! # Example Bot
-//!
-//! A basic ping-pong bot looks like:
-//!
-//! ```rust,no_run
-//! #[macro_use] extern crate serenity;
-//!
-//! # #[cfg(all(feature = "client", feature = "standard_framework"))]
-//! # mod inner {
-//! #
-//! use serenity::client::{Client, EventHandler};
-//! use serenity::framework::standard::StandardFramework;
-//! use std::env;
-//!
-//! struct Handler;
-//!
-//! impl EventHandler for Handler {}
-//!
-//! pub fn main() {
-//!     // Login with a bot token from the environment
-//!     let mut client = Client::new(&env::var("DISCORD_TOKEN").expect("token"), Handler)
-//!         .expect("Error creating client");
-//!
-//!     client.with_framework(StandardFramework::new()
-//!         .configure(|c| c.prefix("~")) // set the bot's prefix to "~"
-//!         .cmd("ping", ping));
-//!
-//!     // start listening for events by starting a single shard
-//!     if let Err(why) = client.start() {
-//!         println!("An error occurred while running the client: {:?}", why);
-//!     }
-//! }
-//!
-//! command!(ping(_context, message) {
-//!     let _ = message.reply("Pong!");
-//! });
-//! #
-//! # }
-//! #
-//! # #[cfg(all(feature = "client", feature = "standard_framework"))]
-//! # fn main() { inner::main() }
-//! # #[cfg(not(all(feature = "client", feature = "standard_framework")))]
-//! # fn main() {}
-//! ```
-//!
 //! ### Full Examples
 //!
 //! Full examples, detailing and explaining usage of the basic functionality of the
@@ -81,13 +36,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! serenity = "0.5"
-//! ```
-//!
-//! and to the top of your `main.rs`:
-//!
-//! ```rs
-//! #[macro_use] extern crate serenity;
+//! serenity = "0.6"
 //! ```
 //!
 //! [`Cache`]: cache/struct.Cache.html
@@ -104,58 +53,12 @@
 //! [examples]: https://github.com/serenity-rs/serenity/tree/current/examples
 //! [gateway docs]: gateway/index.html
 #![doc(html_root_url = "https://docs.rs/serenity/*")]
-#![allow(unknown_lints)]
 #![allow(clippy::doc_markdown, clippy::inline_always)]
 #![warn(clippy::enum_glob_use, clippy::if_not_else)]
+#![deny(rust_2018_idioms)]
 
 #[macro_use]
-extern crate bitflags;
-#[allow(unused_imports)]
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate serde_derive;
-#[allow(unused_imports)]
-#[macro_use]
-extern crate serde_json;
-
-#[cfg(feature = "lazy_static")]
-#[macro_use]
-extern crate lazy_static;
-
-extern crate chrono;
-extern crate parking_lot;
 extern crate serde;
-
-#[cfg(feature = "base64")]
-extern crate base64;
-#[cfg(feature = "byteorder")]
-extern crate byteorder;
-#[cfg(feature = "flate2")]
-extern crate flate2;
-#[cfg(feature = "hyper")]
-extern crate hyper;
-#[cfg(feature = "hyper-native-tls")]
-extern crate hyper_native_tls;
-#[cfg(feature = "multipart")]
-extern crate multipart;
-#[cfg(feature = "native-tls")]
-extern crate native_tls;
-#[cfg(feature = "opus")]
-extern crate opus;
-#[cfg(feature = "sodiumoxide")]
-extern crate sodiumoxide;
-#[cfg(feature = "threadpool")]
-extern crate threadpool;
-#[cfg(feature = "typemap")]
-extern crate typemap;
-#[cfg(feature = "evzht9h3nznqzwl")]
-extern crate evzht9h3nznqzwl as websocket;
-
-#[allow(unused_imports)]
-#[cfg(test)]
-#[macro_use]
-extern crate matches;
 
 #[macro_use]
 mod internal;
@@ -183,56 +86,39 @@ pub mod voice;
 
 mod error;
 
-pub use error::{Error, Result};
+pub use crate::error::{Error, Result};
 
 #[cfg(feature = "client")]
-pub use client::Client;
+pub use crate::client::Client;
 
 #[cfg(feature = "raw-ws-event")]
 pub use websocket::message::OwnedMessage;
 
 #[cfg(feature = "cache")]
-use cache::Cache;
+use crate::cache::Cache;
 #[cfg(feature = "cache")]
 use parking_lot::RwLock;
-
 #[cfg(feature = "cache")]
-lazy_static! {
-    /// A mutable and lazily-initialized static binding. It can be accessed
-    /// across any function and in any context.
-    ///
-    /// This [`Cache`] instance is updated for every event received, so you do
-    /// not need to maintain your own cache.
-    ///
-    /// See the [cache module documentation] for more details.
-    ///
-    /// The Cache itself is wrapped within an `RwLock`, which allows for
-    /// multiple readers or at most one writer at a time across threads. This
-    /// means that you may have multiple commands reading from the Cache
-    /// concurrently.
-    ///
-    /// # Examples
-    ///
-    /// Retrieve the [current user][`CurrentUser`]'s Id, by opening a Read
-    /// guard:
-    ///
-    /// ```rust,ignore
-    /// use serenity::CACHE;
-    ///
-    /// println!("{}", CACHE.read().user.id);
-    /// ```
-    ///
-    /// Update the cache's settings to enable caching of channels' messages:
-    ///
-    /// ```rust
-    /// use serenity::CACHE;
-    ///
-    /// // Cache up to the 10 most recent messages per channel.
-    /// CACHE.write().settings_mut().max_messages(10);
-    /// ```
-    ///
-    /// [`CurrentUser`]: model/user/struct.CurrentUser.html
-    /// [`Cache`]: cache/struct.Cache.html
-    /// [cache module documentation]: cache/index.html
-    pub static ref CACHE: RwLock<Cache> = RwLock::new(Cache::default());
+use std::time::Duration;
+#[cfg(any(feature = "client", feature = "http"))]
+use std::sync::Arc;
+#[cfg(all(feature = "client", feature = "http"))]
+use crate::http::Http;
+
+
+#[cfg(feature = "client")]
+#[derive(Default)]
+pub struct CacheAndHttp {
+    #[cfg(feature = "cache")]
+    pub cache: Arc<RwLock<Cache>>,
+    #[cfg(feature = "cache")]
+    pub update_cache_timeout: Option<Duration>,
+    #[cfg(feature = "http")]
+    pub http: Arc<Http>,
+    __nonexhaustive: (),
 }
+
+// For the procedural macros defined in `command_attr`; do not remove!
+#[allow(clippy::useless_attribute)]
+#[allow(rust_2018_idioms)]
+extern crate self as serenity;

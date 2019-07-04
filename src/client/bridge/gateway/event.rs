@@ -2,8 +2,9 @@
 //! itself.
 
 use super::ShardId;
-use ::gateway::ConnectionStage;
+use crate::gateway::ConnectionStage;
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Clone, Debug)]
 pub(crate) enum ClientEvent {
     ShardStageUpdate(ShardStageUpdateEvent),

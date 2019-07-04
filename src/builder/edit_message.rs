@@ -1,7 +1,8 @@
-use internal::prelude::*;
-use std::fmt::Display;
+use crate::internal::prelude::*;
 use super::CreateEmbed;
-use utils::{self, VecMap};
+use crate::utils;
+
+use std::collections::HashMap;
 
 /// A builder to specify the fields to edit in an existing message.
 ///
@@ -11,40 +12,47 @@ use utils::{self, VecMap};
 ///
 /// ```rust,no_run
 /// # use serenity::model::id::{ChannelId, MessageId};
+/// # #[cfg(feature = "client")]
+/// # use serenity::client::Context;
+/// # #[cfg(feature = "framework")]
+/// # use serenity::framework::standard::{CommandResult, macros::command};
 /// #
-/// # let mut message = ChannelId(7).message(MessageId(8)).unwrap();
+/// # #[cfg(all(feature = "http", feature = "framework"))]
+/// # #[command]
+/// # fn example(ctx: &mut Context) -> CommandResult {
+/// # let mut message = ChannelId(7).message(&ctx.http, MessageId(8)).unwrap();
+/// let _ = message.edit(ctx, |m| {
+///     m.content("hello")
+/// });
+/// # Ok(())
+/// # }
 /// #
-///
-/// let _ = message.edit(|m| m.content("hello"));
+/// # fn main() {}
 /// ```
 ///
 /// [`Message`]: ../model/channel/struct.Message.html
 #[derive(Clone, Debug, Default)]
-pub struct EditMessage(pub VecMap<&'static str, Value>);
+pub struct EditMessage(pub HashMap<&'static str, Value>);
 
 impl EditMessage {
     /// Set the content of the message.
     ///
     /// **Note**: Message contents must be under 2000 unicode code points.
     #[inline]
-    pub fn content<D: Display>(self, content: D) -> Self {
-        self._content(content.to_string())
-    }
-
-    fn _content(mut self, content: String) -> Self {
-        self.0.insert("content", Value::String(content));
-
+    pub fn content<D: ToString>(&mut self, content: D) -> &mut Self {
+        self.0.insert("content", Value::String(content.to_string()));
         self
     }
 
     /// Set an embed for the message.
-    pub fn embed<F>(mut self, f: F) -> Self
-        where F: FnOnce(CreateEmbed) -> CreateEmbed {
-        let map = utils::vecmap_to_json_map(f(CreateEmbed::default()).0);
+    pub fn embed<F>(&mut self, f: F) -> &mut Self
+    where F: FnOnce(&mut CreateEmbed) -> &mut CreateEmbed {
+        let mut create_embed = CreateEmbed::default();
+        f(&mut create_embed);
+        let map = utils::hashmap_to_json_map(create_embed.0);
         let embed = Value::Object(map);
 
         self.0.insert("embed", embed);
-
         self
     }
 }

@@ -7,7 +7,10 @@ mod member;
 mod partial_guild;
 mod role;
 mod audit_log;
+mod premium_tier;
 
+#[cfg(feature = "http")]
+use crate::http::CacheHttp;
 pub use self::emoji::*;
 pub use self::guild_id::*;
 pub use self::integration::*;
@@ -15,25 +18,31 @@ pub use self::member::*;
 pub use self::partial_guild::*;
 pub use self::role::*;
 pub use self::audit_log::*;
+pub use self::premium_tier::*;
 
 use chrono::{DateTime, FixedOffset};
-use model::prelude::*;
+use crate::model::prelude::*;
 use serde::de::Error as DeError;
-use serde_json;
 use super::utils::*;
 
 #[cfg(all(feature = "cache", feature = "model"))]
-use CACHE;
+use crate::cache::CacheRwLock;
+#[cfg(all(feature = "cache", feature = "model"))]
+use parking_lot::RwLock;
+#[cfg(all(feature = "http", feature = "model"))]
+use serde_json::json;
+#[cfg(all(feature = "cache", feature = "model"))]
+use std::sync::Arc;
 #[cfg(feature = "model")]
-use http;
+use crate::builder::{CreateChannel, EditGuild, EditMember, EditRole};
 #[cfg(feature = "model")]
-use builder::{EditGuild, EditMember, EditRole};
+use crate::constants::LARGE_THRESHOLD;
 #[cfg(feature = "model")]
-use constants::LARGE_THRESHOLD;
-#[cfg(feature = "model")]
-use std;
+use log::{error, warn};
 #[cfg(feature = "model")]
 use std::borrow::Cow;
+#[cfg(feature = "http")]
+use crate::http::Http;
 
 /// A representation of a banning of a user.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Hash, Serialize)]
@@ -136,20 +145,34 @@ pub struct Guild {
     pub system_channel_id: Option<ChannelId>,
     /// Indicator of the current verification level of the guild.
     pub verification_level: VerificationLevel,
-    /// A mapping of of [`User`]s to their current voice state.
+    /// A mapping of [`User`]s to their current voice state.
     ///
     /// [`User`]: ../user/struct.User.html
     #[serde(serialize_with = "serialize_gen_map")]
     pub voice_states: HashMap<UserId, VoiceState>,
+    /// The server's description
+    pub description: Option<String>,
+    /// The server's premium boosting level
+    #[serde(default)]
+    pub premium_tier: PremiumTier,
+    /// The total number of users currently boosting this server
+    #[serde(default)]
+    pub premium_subscription_count: u64,
+    /// The server's banner
+    pub banner: Option<String>,
+    /// The vanity url code for the guild
+    pub vanity_url_code: Option<String>,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
 impl Guild {
     #[cfg(feature = "cache")]
-    fn check_hierarchy(&self, other_user: UserId) -> Result<()> {
-        let current_id = CACHE.read().user.id;
+    fn check_hierarchy(&self, cache: impl AsRef<CacheRwLock>, other_user: UserId) -> Result<()> {
+        let current_id = cache.as_ref().read().user.id;
 
-        if let Some(higher) = self.greater_member_hierarchy(other_user, current_id) {
+        if let Some(higher) = self.greater_member_hierarchy(&cache, other_user, current_id) {
             if higher != current_id {
                 return Err(Error::Model(ModelError::Hierarchy));
             }
@@ -161,6 +184,7 @@ impl Guild {
     /// Returns the "default" channel of the guild for the passed user id.
     /// (This returns the first channel that can be read by the user, if there isn't one,
     /// returns `None`)
+    #[cfg(feature = "http")]
     pub fn default_channel(&self, uid: UserId) -> Option<Arc<RwLock<GuildChannel>>> {
         for (cid, channel) in &self.channels {
             if self.permissions_in(*cid, uid).read_messages() {
@@ -189,13 +213,30 @@ impl Guild {
     }
 
     #[cfg(feature = "cache")]
-    fn has_perms(&self, mut permissions: Permissions) -> bool {
-        let user_id = CACHE.read().user.id;
+    fn has_perms(&self, cache: impl AsRef<CacheRwLock>, mut permissions: Permissions) -> bool {
+        let user_id = cache.as_ref().read().user.id;
 
         let perms = self.member_permissions(user_id);
         permissions.remove(perms);
 
         permissions.is_empty()
+    }
+
+    #[cfg(feature = "cache")]
+    pub fn channel_id_from_name(&self, cache: impl AsRef<CacheRwLock>, name: impl AsRef<str>) -> Option<ChannelId> {
+        let name = name.as_ref();
+        let cache = cache.as_ref().read();
+        let guild = cache.guilds.get(&self.id)?.read();
+
+        guild.channels
+            .iter()
+            .find_map(|(id, c)| {
+                if c.read().name == name {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
     }
 
     /// Ban a [`User`] from the guild. All messages by the
@@ -227,24 +268,28 @@ impl Guild {
     /// [`Guild::ban`]: ../guild/struct.Guild.html#method.ban
     /// [`User`]: ../user/struct.User.html
     /// [Ban Members]: ../permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
+    #[cfg(feature = "client")]
     #[inline]
-    pub fn ban<U: Into<UserId>, BO: BanOptions>(&self, user: U, options: &BO) -> Result<()> {
-        self._ban(user.into(), options)
+    pub fn ban<U: Into<UserId>, BO: BanOptions>(&self, cache_http: impl CacheHttp, user: U, options: &BO) -> Result<()> {
+        self._ban(cache_http, user.into(), options)
     }
 
-    fn _ban<BO: BanOptions>(&self, user: UserId, options: &BO) -> Result<()> {
+    #[cfg(feature = "client")]
+    fn _ban<BO: BanOptions>(&self, cache_http: impl CacheHttp, user: UserId, options: &BO) -> Result<()> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::BAN_MEMBERS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::BAN_MEMBERS;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
+
+                self.check_hierarchy(cache, user)?;
             }
-
-            self.check_hierarchy(user)?;
         }
 
-        self.id.ban(user, options)
+        self.id.ban(cache_http.http(), user, options)
     }
 
     /// Retrieves a list of [`Ban`]s for the guild.
@@ -259,35 +304,41 @@ impl Guild {
     /// [`Ban`]: struct.Ban.html
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [Ban Members]: ../permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
-    pub fn bans(&self) -> Result<Vec<Ban>> {
+    #[cfg(feature = "http")]
+    pub fn bans(&self, cache_http: impl CacheHttp) -> Result<Vec<Ban>> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::BAN_MEMBERS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::BAN_MEMBERS;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.bans()
+        self.id.bans(cache_http.http())
     }
 
     /// Retrieves a list of [`AuditLogs`] for the guild.
     ///
     /// [`AuditLogs`]: audit_log/struct.AuditLogs.html
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn audit_logs(&self, action_type: Option<u8>,
+    pub fn audit_logs(&self, http: impl AsRef<Http>,
+                             action_type: Option<u8>,
                              user_id: Option<UserId>,
                              before: Option<AuditLogEntryId>,
                              limit: Option<u8>) -> Result<AuditLogs> {
-        self.id.audit_logs(action_type, user_id, before, limit)
+        self.id.audit_logs(&http, action_type, user_id, before, limit)
     }
 
     /// Gets all of the guild's channels over the REST API.
     ///
     /// [`Guild`]: struct.Guild.html
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn channels(&self) -> Result<HashMap<ChannelId, GuildChannel>> { self.id.channels() }
+    pub fn channels(&self, http: impl AsRef<Http>) -> Result<HashMap<ChannelId, GuildChannel>> { self.id.channels(&http) }
 
     /// Creates a guild with the data provided.
     ///
@@ -314,14 +365,15 @@ impl Guild {
     /// [`Shard`]: ../../gateway/struct.Shard.html
     /// [US West region]: enum.Region.html#variant.UsWest
     /// [whitelist]: https://discordapp.com/developers/docs/resources/guild#create-guild
-    pub fn create(name: &str, region: Region, icon: Option<&str>) -> Result<PartialGuild> {
+    #[cfg(feature = "http")]
+    pub fn create(http: impl AsRef<Http>, name: &str, region: Region, icon: Option<&str>) -> Result<PartialGuild> {
         let map = json!({
             "icon": icon,
             "name": name,
             "region": region.name(),
         });
 
-        http::create_guild(&map)
+        http.as_ref().create_guild(&map)
     }
 
     /// Creates a new [`Channel`] in the guild.
@@ -335,7 +387,7 @@ impl Guild {
     ///
     /// // assuming a `guild` has already been bound
     ///
-    /// let _ = guild.create_channel("my-test-channel", ChannelType::Text, None);
+    /// let _ = guild.create_channel(|c| c.name("my-test-channel").kind(ChannelType::Text));
     /// ```
     ///
     /// # Errors
@@ -346,18 +398,20 @@ impl Guild {
     /// [`Channel`]: ../channel/enum.Channel.html
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [Manage Channels]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_CHANNELS
-    pub fn create_channel<C>(&self, name: &str, kind: ChannelType, category: C) -> Result<GuildChannel>
-        where C: Into<Option<ChannelId>> {
+    #[cfg(feature = "client")]
+    pub fn create_channel(&self, cache_http: impl CacheHttp, f: impl FnOnce(&mut CreateChannel) -> &mut CreateChannel) -> Result<GuildChannel> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::MANAGE_CHANNELS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::MANAGE_CHANNELS;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.create_channel(name, kind, category)
+        self.id.create_channel(cache_http.http(), f)
     }
 
     /// Creates an emoji in the guild with a name and base64-encoded image. The
@@ -379,9 +433,10 @@ impl Guild {
     /// [`EditProfile::avatar`]: ../../builder/struct.EditProfile.html#method.avatar
     /// [`utils::read_image`]: ../../utils/fn.read_image.html
     /// [Manage Emojis]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_EMOJIS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_emoji(&self, name: &str, image: &str) -> Result<Emoji> {
-        self.id.create_emoji(name, image)
+    pub fn create_emoji(&self, http: impl AsRef<Http>, name: &str, image: &str) -> Result<Emoji> {
+        self.id.create_emoji(&http, name, image)
     }
 
     /// Creates an integration for the guild.
@@ -389,10 +444,11 @@ impl Guild {
     /// Requires the [Manage Guild] permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_integration<I>(&self, integration_id: I, kind: &str) -> Result<()>
+    pub fn create_integration<I>(&self, http: impl AsRef<Http>, integration_id: I, kind: &str) -> Result<()>
         where I: Into<IntegrationId> {
-        self.id.create_integration(integration_id, kind)
+        self.id.create_integration(&http, integration_id, kind)
     }
 
     /// Creates a new role in the guild with the data set, if any.
@@ -417,18 +473,21 @@ impl Guild {
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [`Role`]: struct.Role.html
     /// [Manage Roles]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_ROLES
-    pub fn create_role<F>(&self, f: F) -> Result<Role>
-        where F: FnOnce(EditRole) -> EditRole {
+    #[cfg(feature = "client")]
+    pub fn create_role<F>(&self, cache_http: impl CacheHttp, f: F) -> Result<Role>
+        where F: FnOnce(&mut EditRole) -> &mut EditRole {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::MANAGE_ROLES;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::MANAGE_ROLES;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.create_role(f)
+        self.id.create_role(cache_http.http(), f)
     }
 
     /// Deletes the current guild if the current user is the owner of the
@@ -442,17 +501,21 @@ impl Guild {
     /// if the current user is not the guild owner.
     ///
     /// [`ModelError::InvalidUser`]: ../error/enum.Error.html#variant.InvalidUser
-    pub fn delete(&self) -> Result<PartialGuild> {
+    #[cfg(feature = "http")]
+    pub fn delete(&self, cache_http: impl CacheHttp) -> Result<PartialGuild> {
         #[cfg(feature = "cache")]
         {
-            if self.owner_id != CACHE.read().user.id {
-                let req = Permissions::MANAGE_GUILD;
+            if let Some(cache) = cache_http.cache() {
 
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if self.owner_id != cache.read().user.id {
+                    let req = Permissions::MANAGE_GUILD;
+
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.delete()
+        self.id.delete(cache_http.http())
     }
 
     /// Deletes an [`Emoji`] from the guild.
@@ -461,9 +524,10 @@ impl Guild {
     ///
     /// [`Emoji`]: struct.Emoji.html
     /// [Manage Emojis]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_EMOJIS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_emoji<E: Into<EmojiId>>(&self, emoji_id: E) -> Result<()> {
-        self.id.delete_emoji(emoji_id)
+    pub fn delete_emoji<E: Into<EmojiId>>(&self, http: impl AsRef<Http>, emoji_id: E) -> Result<()> {
+        self.id.delete_emoji(&http, emoji_id)
     }
 
     /// Deletes an integration by Id from the guild.
@@ -471,9 +535,10 @@ impl Guild {
     /// Requires the [Manage Guild] permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_integration<I: Into<IntegrationId>>(&self, integration_id: I) -> Result<()> {
-        self.id.delete_integration(integration_id)
+    pub fn delete_integration<I: Into<IntegrationId>>(&self, http: impl AsRef<Http>, integration_id: I) -> Result<()> {
+        self.id.delete_integration(&http, integration_id)
     }
 
     /// Deletes a [`Role`] by Id from the guild.
@@ -486,9 +551,10 @@ impl Guild {
     /// [`Role`]: struct.Role.html
     /// [`Role::delete`]: struct.Role.html#method.delete
     /// [Manage Roles]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_ROLES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_role<R: Into<RoleId>>(&self, role_id: R) -> Result<()> {
-        self.id.delete_role(role_id)
+    pub fn delete_role<R: Into<RoleId>>(&self, http: impl AsRef<Http>, role_id: R) -> Result<()> {
+        self.id.delete_role(&http, role_id)
     }
 
     /// Edits the current guild with new data where specified.
@@ -519,18 +585,21 @@ impl Guild {
     ///
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
-    pub fn edit<F>(&mut self, f: F) -> Result<()>
-        where F: FnOnce(EditGuild) -> EditGuild {
+    #[cfg(feature = "client")]
+    pub fn edit<F>(&mut self, cache_http: impl CacheHttp, f: F) -> Result<()>
+        where F: FnOnce(&mut EditGuild) -> &mut EditGuild {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::MANAGE_GUILD;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::MANAGE_GUILD;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        match self.id.edit(f) {
+        match self.id.edit(cache_http.http(), f) {
             Ok(guild) => {
                 self.afk_channel_id = guild.afk_channel_id;
                 self.afk_timeout = guild.afk_timeout;
@@ -562,9 +631,10 @@ impl Guild {
     /// [`Emoji`]: struct.Emoji.html
     /// [`Emoji::edit`]: struct.Emoji.html#method.edit
     /// [Manage Emojis]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_EMOJIS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_emoji<E: Into<EmojiId>>(&self, emoji_id: E, name: &str) -> Result<Emoji> {
-        self.id.edit_emoji(emoji_id, name)
+    pub fn edit_emoji<E: Into<EmojiId>>(&self, http: impl AsRef<Http>, emoji_id: E, name: &str) -> Result<Emoji> {
+        self.id.edit_emoji(&http, emoji_id, name)
     }
 
     /// Edits the properties of member of the guild, such as muting or
@@ -580,10 +650,11 @@ impl Guild {
     /// ```rust,ignore
     /// guild.edit_member(user_id, |m| m.mute(true).roles(&vec![role_id]));
     /// ```
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_member<F, U>(&self, user_id: U, f: F) -> Result<()>
-        where F: FnOnce(EditMember) -> EditMember, U: Into<UserId> {
-        self.id.edit_member(user_id, f)
+    pub fn edit_member<F, U>(&self, http: impl AsRef<Http>, user_id: U, f: F) -> Result<()>
+        where F: FnOnce(&mut EditMember) -> &mut EditMember, U: Into<UserId> {
+        self.id.edit_member(&http, user_id, f)
     }
 
     /// Edits the current user's nickname for the guild.
@@ -600,17 +671,20 @@ impl Guild {
     ///
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [Change Nickname]: ../permissions/struct.Permissions.html#associatedconstant.CHANGE_NICKNAME
-    pub fn edit_nickname(&self, new_nickname: Option<&str>) -> Result<()> {
+    #[cfg(feature = "client")]
+    pub fn edit_nickname(&self, cache_http: impl CacheHttp, new_nickname: Option<&str>) -> Result<()> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::CHANGE_NICKNAME;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::CHANGE_NICKNAME;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.edit_nickname(new_nickname)
+        self.id.edit_nickname(cache_http.http(), new_nickname)
     }
 
     /// Edits a role, optionally setting its fields.
@@ -622,14 +696,15 @@ impl Guild {
     /// Make a role hoisted:
     ///
     /// ```rust,ignore
-    /// guild.edit_role(RoleId(7), |r| r.hoist(true));
+    /// guild.edit_role(&context, RoleId(7), |r| r.hoist(true));
     /// ```
     ///
     /// [Manage Roles]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_ROLES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_role<F, R>(&self, role_id: R, f: F) -> Result<Role>
-        where F: FnOnce(EditRole) -> EditRole, R: Into<RoleId> {
-        self.id.edit_role(role_id, f)
+    pub fn edit_role<F, R>(&self, http: impl AsRef<Http>, role_id: R, f: F) -> Result<Role>
+        where F: FnOnce(&mut EditRole) -> &mut EditRole, R: Into<RoleId> {
+        self.id.edit_role(&http, role_id, f)
     }
 
     /// Edits the order of [`Role`]s
@@ -646,17 +721,19 @@ impl Guild {
     ///
     /// [`Role`]: struct.Role.html
     /// [Manage Roles]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_ROLES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_role_position<R>(&self, role_id: R, position: u64) -> Result<Vec<Role>>
+    pub fn edit_role_position<R>(&self, http: impl AsRef<Http>, role_id: R, position: u64) -> Result<Vec<Role>>
         where R: Into<RoleId> {
-        self.id.edit_role_position(role_id, position)
+        self.id.edit_role_position(&http, role_id, position)
     }
 
     /// Gets a partial amount of guild data by its Id.
     ///
     /// Requires that the current user be in the guild.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn get<G: Into<GuildId>>(guild_id: G) -> Result<PartialGuild> { guild_id.into().to_partial_guild() }
+    pub fn get<G: Into<GuildId>>(http: impl AsRef<Http>, guild_id: G) -> Result<PartialGuild> { guild_id.into().to_partial_guild(&http) }
 
     /// Returns which of two [`User`]s has a higher [`Member`] hierarchy.
     ///
@@ -673,14 +750,15 @@ impl Guild {
     /// [`position`]: struct.Role.html#structfield.position
     #[cfg(feature = "cache")]
     #[inline]
-    pub fn greater_member_hierarchy<T, U>(&self, lhs_id: T, rhs_id: U)
+    pub fn greater_member_hierarchy<T, U>(&self, cache: impl AsRef<CacheRwLock>, lhs_id: T, rhs_id: U)
         -> Option<UserId> where T: Into<UserId>, U: Into<UserId> {
-        self._greater_member_hierarchy(lhs_id.into(), rhs_id.into())
+        self._greater_member_hierarchy(&cache, lhs_id.into(), rhs_id.into())
     }
 
     #[cfg(feature = "cache")]
     fn _greater_member_hierarchy(
         &self,
+        cache: impl AsRef<CacheRwLock>,
         lhs_id: UserId,
         rhs_id: UserId,
     ) -> Option<UserId> {
@@ -697,10 +775,10 @@ impl Guild {
         }
 
         let lhs = self.members.get(&lhs_id)?
-            .highest_role_info()
+            .highest_role_info(&cache)
             .unwrap_or((RoleId(0), 0));
         let rhs = self.members.get(&rhs_id)?
-            .highest_role_info()
+            .highest_role_info(&cache)
             .unwrap_or((RoleId(0), 0));
 
         // If LHS and RHS both have no top position or have the same role ID,
@@ -740,8 +818,9 @@ impl Guild {
     /// Gets all integration of the guild.
     ///
     /// This performs a request over the REST API.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn integrations(&self) -> Result<Vec<Integration>> { self.id.integrations() }
+    pub fn integrations(&self, http: impl AsRef<Http>) -> Result<Vec<Integration>> { self.id.integrations(&http) }
 
     /// Retrieves the active invites for the guild.
     ///
@@ -754,17 +833,20 @@ impl Guild {
     ///
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
-    pub fn invites(&self) -> Result<Vec<RichInvite>> {
+    #[cfg(feature = "http")]
+    pub fn invites(&self, cache_http: impl CacheHttp) -> Result<Vec<RichInvite>> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::MANAGE_GUILD;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::MANAGE_GUILD;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.invites()
+        self.id.invites(cache_http.http())
     }
 
     /// Checks if the guild is 'large'. A guild is considered large if it has
@@ -778,19 +860,23 @@ impl Guild {
     ///
     /// [`Member`]: struct.Member.html
     /// [Kick Members]: ../permissions/struct.Permissions.html#associatedconstant.KICK_MEMBERS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn kick<U: Into<UserId>>(&self, user_id: U) -> Result<()> { self.id.kick(user_id) }
+    pub fn kick<U: Into<UserId>>(&self, http: impl AsRef<Http>, user_id: U) -> Result<()> { self.id.kick(&http, user_id) }
 
     /// Leaves the guild.
     #[inline]
-    pub fn leave(&self) -> Result<()> { self.id.leave() }
+    pub fn leave(&self, http: impl AsRef<Http>) -> Result<()> { self.id.leave(&http) }
 
     /// Gets a user's [`Member`] for the guild by Id.
     ///
     /// [`Guild`]: ../guild/struct.Guild.html
     /// [`Member`]: struct.Member.html
     #[inline]
-    pub fn member<U: Into<UserId>>(&self, user_id: U) -> Result<Member> { self.id.member(user_id) }
+    #[cfg(feature = "client")]
+    pub fn member<U: Into<UserId>>(&self, cache_http: impl CacheHttp, user_id: U) -> Result<Member> {
+        self.id.member(cache_http, user_id)
+    }
 
     /// Gets a list of the guild's members.
     ///
@@ -799,10 +885,11 @@ impl Guild {
     /// [`User`]'s Id.
     ///
     /// [`User`]: ../user/struct.User.html
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn members<U>(&self, limit: Option<u64>, after: Option<U>) -> Result<Vec<Member>>
-        where U: Into<UserId> {
-        self.id.members(limit, after)
+    pub fn members<U>(&self, http: impl AsRef<Http>, limit: Option<u64>, after: U) -> Result<Vec<Member>>
+        where U: Into<Option<UserId>> {
+        self.id.members(&http, limit, after)
     }
 
     /// Gets a list of all the members (satisfying the status provided to the function) in this
@@ -1172,21 +1259,11 @@ impl Guild {
     /// Requires the [Move Members] permission.
     ///
     /// [Move Members]: ../permissions/struct.Permissions.html#associatedconstant.MOVE_MEMBERS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn move_member<C, U>(&self, user_id: U, channel_id: C) -> Result<()>
+    pub fn move_member<C, U>(&self, http: impl AsRef<Http>, user_id: U, channel_id: C) -> Result<()>
         where C: Into<ChannelId>, U: Into<UserId> {
-        self.id.move_member(user_id, channel_id)
-    }
-
-    /// Alias for [`permissions_in`].
-    ///
-    /// [`permissions_in`]: #method.permissions_in
-    #[deprecated(since = "0.4.3",
-                 note = "This will serve a different purpose in 0.5")]
-    #[inline]
-    pub fn permissions_for<C, U>(&self, channel_id: C, user_id: U)
-        -> Permissions where C: Into<ChannelId>, U: Into<UserId> {
-        self.permissions_in(channel_id, user_id)
+        self.id.move_member(&http, user_id, channel_id)
     }
 
     /// Calculate a [`User`]'s permissions in a given channel in the guild.
@@ -1350,17 +1427,20 @@ impl Guild {
     /// [`GuildPrune`]: struct.GuildPrune.html
     /// [`Member`]: struct.Member.html
     /// [Kick Members]: ../permissions/struct.Permissions.html#associatedconstant.KICK_MEMBERS
-    pub fn prune_count(&self, days: u16) -> Result<GuildPrune> {
+    #[cfg(feature = "client")]
+    pub fn prune_count(&self, cache_http: impl CacheHttp, days: u16) -> Result<GuildPrune> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::KICK_MEMBERS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::KICK_MEMBERS;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.prune_count(days)
+        self.id.prune_count(cache_http.http(), days)
     }
 
     /// Re-orders the channels of the guild.
@@ -1368,9 +1448,10 @@ impl Guild {
     /// Although not required, you should specify all channels' positions,
     /// regardless of whether they were updated. Otherwise, positioning can
     /// sometimes get weird.
-    pub fn reorder_channels<It>(&self, channels: It) -> Result<()>
+    #[cfg(feature = "http")]
+    pub fn reorder_channels<It>(&self, http: impl AsRef<Http>, channels: It) -> Result<()>
         where It: IntoIterator<Item = (ChannelId, u64)> {
-        self.id.reorder_channels(channels)
+        self.id.reorder_channels(&http, channels)
     }
 
     /// Returns the Id of the shard associated with the guild.
@@ -1385,7 +1466,7 @@ impl Guild {
     /// [`utils::shard_id`]: ../../utils/fn.shard_id.html
     #[cfg(all(feature = "cache", feature = "utils"))]
     #[inline]
-    pub fn shard_id(&self) -> u64 { self.id.shard_id() }
+    pub fn shard_id(&self, cache: impl AsRef<CacheRwLock>) -> u64 { self.id.shard_id(&cache) }
 
     /// Returns the Id of the shard associated with the guild.
     ///
@@ -1423,9 +1504,10 @@ impl Guild {
     /// Requires the [Manage Guild] permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn start_integration_sync<I: Into<IntegrationId>>(&self, integration_id: I) -> Result<()> {
-        self.id.start_integration_sync(integration_id)
+    pub fn start_integration_sync<I: Into<IntegrationId>>(&self, http: impl AsRef<Http>, integration_id: I) -> Result<()> {
+        self.id.start_integration_sync(&http, integration_id)
     }
 
     /// Starts a prune of [`Member`]s.
@@ -1443,17 +1525,20 @@ impl Guild {
     /// [`GuildPrune`]: struct.GuildPrune.html
     /// [`Member`]: struct.Member.html
     /// [Kick Members]: ../permissions/struct.Permissions.html#associatedconstant.KICK_MEMBERS
-    pub fn start_prune(&self, days: u16) -> Result<GuildPrune> {
+    #[cfg(feature = "client")]
+    pub fn start_prune(&self, cache_http: impl CacheHttp, days: u16) -> Result<GuildPrune> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::KICK_MEMBERS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::KICK_MEMBERS;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.start_prune(days)
+        self.id.start_prune(cache_http.http(), days)
     }
 
     /// Unbans the given [`User`] from the guild.
@@ -1468,17 +1553,20 @@ impl Guild {
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [`User`]: ../user/struct.User.html
     /// [Ban Members]: ../permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
-    pub fn unban<U: Into<UserId>>(&self, user_id: U) -> Result<()> {
+    #[cfg(feature = "client")]
+    pub fn unban<U: Into<UserId>>(&self, cache_http: impl CacheHttp, user_id: U) -> Result<()> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::BAN_MEMBERS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::BAN_MEMBERS;
 
-            if !self.has_perms(req) {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !self.has_perms(cache, req) {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.unban(user_id)
+        self.id.unban(&cache_http.http(), user_id)
     }
 
     /// Retrieve's the guild's vanity URL.
@@ -1486,9 +1574,10 @@ impl Guild {
     /// **Note**: Requires the [Manage Guild] permission.
     ///
     /// [Manage Guild]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn vanity_url(&self) -> Result<String> {
-        self.id.vanity_url()
+    pub fn vanity_url(&self, http: impl AsRef<Http>) -> Result<String> {
+        self.id.vanity_url(&http)
     }
 
     /// Retrieves the guild's webhooks.
@@ -1496,8 +1585,9 @@ impl Guild {
     /// **Note**: Requires the [Manage Webhooks] permission.
     ///
     /// [Manage Webhooks]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_WEBHOOKS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn webhooks(&self) -> Result<Vec<Webhook>> { self.id.webhooks() }
+    pub fn webhooks(&self, http: impl AsRef<Http>) -> Result<Vec<Webhook>> { self.id.webhooks(&http) }
 
     /// Obtain a reference to a role by its name.
     ///
@@ -1509,19 +1599,17 @@ impl Guild {
     /// Obtain a reference to a [`Role`] by its name.
     ///
     /// ```rust,no_run
-    /// # #[cfg(feature = "client")] {
+    /// # #[cfg(all(feature = "cache", feature = "client"))]
+    /// # fn main() {
     /// use serenity::model::prelude::*;
     /// use serenity::prelude::*;
     ///
     /// struct Handler;
     ///
     /// impl EventHandler for Handler {
-    ///     fn message(&self, _: Context, msg: Message) {
-    ///         // If you are using the `cache`-feature, consider using
-    ///         // `to_guild_cached` instead of `to_partial_guild()` to avoid
-    ///         // a REST-request.
-    ///         if let Ok(guild) = msg.guild_id.unwrap().to_partial_guild() {
-    ///             if let Some(role) = guild.role_by_name("role_name") {
+    ///     fn message(&self, ctx: Context, msg: Message) {
+    ///         if let Some(arc) = msg.guild_id.unwrap().to_guild_cached(&ctx.cache) {
+    ///             if let Some(role) = arc.read().role_by_name("role_name") {
     ///                 println!("{:?}", role);
     ///             }
     ///         }
@@ -1532,6 +1620,9 @@ impl Guild {
     ///
     /// client.start().unwrap();
     /// # }
+    /// #
+    /// # #[cfg(not(all(feature = "cache", feature = "client")))]
+    /// # fn main() {}
     /// ```
     ///
     /// [`Role`]: ../guild/struct.Role.html
@@ -1670,6 +1761,26 @@ impl<'de> Deserialize<'de> for Guild {
             .ok_or_else(|| DeError::custom("expected guild voice_states"))
             .and_then(deserialize_voice_states)
             .map_err(DeError::custom)?;
+        let description = match map.remove("description") {
+            Some(v) => Option::<String>::deserialize(v).map_err(DeError::custom)?,
+            None => None,
+        };
+        let premium_tier = match map.remove("premium_tier") {
+            Some(v) => PremiumTier::deserialize(v).map_err(DeError::custom)?,
+            None => PremiumTier::default(),
+        };
+        let premium_subscription_count = match map.remove("premium_subscription_count") {
+            Some(Value::Null) | None => 0,
+            Some(v) => u64::deserialize(v).map_err(DeError::custom)?,
+        };
+        let banner = match map.remove("banner") {
+            Some(v) => Option::<String>::deserialize(v).map_err(DeError::custom)?,
+            None => None,
+        };
+        let vanity_url_code = match map.remove("vanity_url_code") {
+            Some(v) => Option::<String>::deserialize(v).map_err(DeError::custom)?,
+            None => None,
+        };
 
         Ok(Self {
             afk_channel_id,
@@ -1696,6 +1807,12 @@ impl<'de> Deserialize<'de> for Guild {
             system_channel_id,
             verification_level,
             voice_states,
+            description,
+            premium_tier,
+            premium_subscription_count,
+            banner,
+            vanity_url_code,
+            _nonexhaustive: (),
         })
     }
 }
@@ -1703,13 +1820,13 @@ impl<'de> Deserialize<'de> for Guild {
 /// Checks if a `&str` contains another `&str`.
 #[cfg(feature = "model")]
 fn contains_case_insensitive(to_look_at: &str, to_find: &str) -> bool {
-    to_look_at.to_lowercase().contains(to_find)
+    to_look_at.to_lowercase().contains(&to_find.to_lowercase())
 }
 
 /// Checks if a `&str` starts with another `&str`.
 #[cfg(feature = "model")]
 fn starts_with_case_insensitive(to_look_at: &str, to_find: &str) -> bool {
-    to_look_at.to_lowercase().starts_with(to_find)
+    to_look_at.to_lowercase().starts_with(&to_find.to_lowercase())
 }
 
 /// Takes a `&str` as `origin` and tests if either
@@ -1738,13 +1855,15 @@ fn closest_to_origin(origin: &str, word_a: &str, word_b: &str) -> std::cmp::Orde
 ///
 /// This is used to differentiate whether a guild itself can be used or whether
 /// a guild needs to be retrieved from the cache.
-#[allow(large_enum_variant)]
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum GuildContainer {
     /// A guild which can have its contents directly searched.
     Guild(PartialGuild),
     /// A guild's id, which can be used to search the cache for a guild.
     Id(GuildId),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 /// Information relating to a guild's widget embed.
@@ -1828,13 +1947,15 @@ pub struct GuildUnavailable {
     pub unavailable: bool,
 }
 
-#[allow(large_enum_variant)]
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum GuildStatus {
     OnlinePartialGuild(PartialGuild),
     OnlineGuild(Guild),
     Offline(GuildUnavailable),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 #[cfg(feature = "model")]
@@ -1847,6 +1968,7 @@ impl GuildStatus {
             GuildStatus::Offline(offline) => offline.id,
             GuildStatus::OnlineGuild(ref guild) => guild.id,
             GuildStatus::OnlinePartialGuild(ref partial_guild) => partial_guild.id,
+            GuildStatus::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -1858,6 +1980,8 @@ pub enum DefaultMessageNotificationLevel {
     All = 0,
     /// Receive only mentions.
     Mentions = 1,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 enum_number!(
@@ -1868,10 +1992,11 @@ enum_number!(
 );
 
 impl DefaultMessageNotificationLevel {
-    pub fn num(&self) -> u64 {
-        match *self {
+    pub fn num(self) -> u64 {
+        match self {
             DefaultMessageNotificationLevel::All => 0,
             DefaultMessageNotificationLevel::Mentions => 1,
+            DefaultMessageNotificationLevel::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -1885,6 +2010,8 @@ pub enum ExplicitContentFilter {
     WithoutRole = 1,
     /// Scan messages sent by all members.
     All = 2,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 enum_number!(
@@ -1896,11 +2023,12 @@ enum_number!(
 );
 
 impl ExplicitContentFilter {
-    pub fn num(&self) -> u64 {
-        match *self {
+    pub fn num(self) -> u64 {
+        match self {
             ExplicitContentFilter::None => 0,
             ExplicitContentFilter::WithoutRole => 1,
             ExplicitContentFilter::All => 2,
+            ExplicitContentFilter::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -1912,6 +2040,8 @@ pub enum MfaLevel {
     None = 0,
     /// MFA is enabled.
     Elevated = 1,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 enum_number!(
@@ -1922,10 +2052,11 @@ enum_number!(
 );
 
 impl MfaLevel {
-    pub fn num(&self) -> u64 {
-        match *self {
+    pub fn num(self) -> u64 {
+        match self {
             MfaLevel::None => 0,
             MfaLevel::Elevated => 1,
+            MfaLevel::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -1951,6 +2082,8 @@ pub enum Region {
     #[serde(rename = "vip-amsterdam")] VipAmsterdam,
     #[serde(rename = "vip-us-east")] VipUsEast,
     #[serde(rename = "vip-us-west")] VipUsWest,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl Region {
@@ -1974,6 +2107,7 @@ impl Region {
             Region::VipAmsterdam => "vip-amsterdam",
             Region::VipUsEast => "vip-us-east",
             Region::VipUsWest => "vip-us-west",
+            Region::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -1994,6 +2128,8 @@ pub enum VerificationLevel {
     High = 3,
     /// Must have a verified phone on the user's Discord account.
     Higher = 4,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 enum_number!(
@@ -2007,13 +2143,14 @@ enum_number!(
 );
 
 impl VerificationLevel {
-    pub fn num(&self) -> u64 {
-        match *self {
+    pub fn num(self) -> u64 {
+        match self {
             VerificationLevel::None => 0,
             VerificationLevel::Low => 1,
             VerificationLevel::Medium => 2,
             VerificationLevel::High => 3,
             VerificationLevel::Higher => 4,
+            VerificationLevel::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -2023,7 +2160,7 @@ mod test {
     #[cfg(feature = "model")]
     mod model {
         use chrono::prelude::*;
-        use model::prelude::*;
+        use crate::model::prelude::*;
         use std::collections::*;
         use std::sync::Arc;
 
@@ -2034,6 +2171,7 @@ mod test {
                 bot: true,
                 discriminator: 1432,
                 name: "test".to_string(),
+                _nonexhaustive: (),
             }
         }
 
@@ -2052,6 +2190,7 @@ mod test {
                 nick: Some("aaaa".to_string()),
                 roles: vec1,
                 user: u,
+                _nonexhaustive: (),
             }
         }
 
@@ -2096,9 +2235,15 @@ mod test {
                 splash: Some("asdf".to_string()),
                 verification_level: VerificationLevel::None,
                 voice_states: hm6,
+                description: None,
+                premium_tier: PremiumTier::Tier1,
                 application_id: Some(ApplicationId(0)),
                 explicit_content_filter: ExplicitContentFilter::None,
                 system_channel_id: Some(ChannelId(0)),
+                premium_subscription_count: 12,
+                banner: None,
+                vanity_url_code: Some("bruhmoment".to_string()),
+                _nonexhaustive: (),
             }
         }
 

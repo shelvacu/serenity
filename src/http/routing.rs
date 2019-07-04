@@ -46,7 +46,7 @@ pub enum Route {
     // Refer to the docs on [Rate Limits] in the yellow warning section.
     //
     // Additionally, this needs to be a `LightMethod` from the parent module
-    // and _not_ a `hyper` `Method` due to `hyper`'s not deriving `Copy`.
+    // and _not_ a `reqwest` `Method` due to `reqwest`'s not deriving `Copy`.
     //
     // [Rate Limits]: https://discordapp.com/developers/docs/topics/rate-limits
     ChannelsIdMessagesId(LightMethod, u64),
@@ -261,6 +261,8 @@ pub enum Route {
     /// This is a special case, in that if the route is `None` then pre- and
     /// post-hooks are not executed.
     None,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl Route {
@@ -751,6 +753,9 @@ pub enum RouteInfo<'a> {
         guild_id: u64,
         role_id: u64,
     },
+    EditRolePosition {
+        guild_id: u64,
+    },
     EditWebhook {
         webhook_id: u64,
     },
@@ -910,10 +915,12 @@ pub enum RouteInfo<'a> {
         channel_id: u64,
         message_id: u64,
     },
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl<'a> RouteInfo<'a> {
-    pub fn deconstruct(&self) -> (LightMethod, Route, Cow<str>) {
+    pub fn deconstruct(&self) -> (LightMethod, Route, Cow<'_, str>) {
         match *self {
             RouteInfo::AddGroupRecipient { group_id, user_id } => (
                 LightMethod::Put,
@@ -1133,6 +1140,11 @@ impl<'a> RouteInfo<'a> {
                 LightMethod::Patch,
                 Route::GuildsIdRolesId(guild_id),
                 Cow::from(Route::guild_role(guild_id, role_id)),
+            ),
+            RouteInfo::EditRolePosition { guild_id } => (
+                LightMethod::Patch,
+                Route::GuildsIdRolesId(guild_id),
+                Cow::from(Route::guild_roles(guild_id)),
             ),
             RouteInfo::EditWebhook { webhook_id } => (
                 LightMethod::Patch,
@@ -1428,6 +1440,7 @@ impl<'a> RouteInfo<'a> {
                 Route::ChannelsIdPinsMessageId(channel_id),
                 Cow::from(Route::channel_pin(channel_id, message_id)),
             ),
+            RouteInfo::__Nonexhaustive => unreachable!(),
         }
     }
 }

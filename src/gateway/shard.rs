@@ -1,8 +1,8 @@
-use constants::{self, close_codes};
-use internal::prelude::*;
-use model::{
+use crate::constants::{self, close_codes};
+use crate::internal::prelude::*;
+use crate::model::{
     event::{Event, GatewayEvent},
-    gateway::Game,
+    gateway::Activity,
     id::GuildId,
     user::OnlineStatus
 };
@@ -20,17 +20,23 @@ use super::{
     WsClient,
     WebSocketGatewayClientExt,
 };
-use websocket::{
-    client::Url,
-    stream::sync::AsTcpStream,
-    sync::client::ClientBuilder,
-    WebSocketError
+use tungstenite::{
+    error::Error as TungsteniteError,
+    protocol::frame::CloseFrame,
 };
+use url::Url;
+use log::{error, debug, info, trace, warn};
+
+#[cfg(not(feature = "native_tls_backend"))]
+use crate::internal::ws_impl::create_rustls_client;
+
+#[cfg(feature = "native_tls_backend")]
+use tungstenite::handshake::client::Request;
 
 /// A Shard is a higher-level handler for a websocket connection to Discord's
 /// gateway. The shard allows for sending and receiving messages over the
-/// websocket, such as setting the active game, reconnecting, syncing guilds,
-/// and more.
+/// websocket, such as setting the active activity, reconnecting, syncing
+/// guilds, and more.
 ///
 /// Refer to the [module-level documentation][module docs] for information on
 /// effectively using multiple shards, if you need to.
@@ -89,7 +95,7 @@ pub struct Shard {
     // This acts as a timeout to determine if the shard has - for some reason -
     // not started within a decent amount of time.
     pub started: Instant,
-    pub token: Arc<Mutex<String>>,
+    pub token: String,
     ws_url: Arc<Mutex<String>>,
 }
 
@@ -104,23 +110,19 @@ impl Shard {
     /// then listening for events:
     ///
     /// ```rust,no_run
-    /// extern crate parking_lot;
-    /// extern crate serenity;
+    /// use serenity::gateway::Shard;
+    /// use parking_lot::Mutex;
+    /// use std::{env, sync::Arc};
     /// #
-    /// # use std::error::Error;
+    /// # use serenity::http::Http;
+    /// # use std::{error::Error};
     /// #
     /// # fn try_main() -> Result<(), Box<Error>> {
-    /// #
-    /// use parking_lot::Mutex;
-    /// use serenity::gateway::Shard;
-    /// use serenity::http;
-    /// use std::env;
-    /// use std::sync::Arc;
-    ///
-    /// let token = Arc::new(Mutex::new(env::var("DISCORD_BOT_TOKEN")?));
+    /// #     let http = Arc::new(Http::default());
+    /// let token = env::var("DISCORD_BOT_TOKEN")?;
     /// // retrieve the gateway response, which contains the URL to connect to
-    /// let gateway = Arc::new(Mutex::new(http::get_gateway()?.url));
-    /// let shard = Shard::new(gateway, token, [0, 1])?;
+    /// let gateway = Arc::new(Mutex::new(http.get_gateway()?.url));
+    /// let shard = Shard::new(gateway, &token, [0, 1])?;
     ///
     /// // at this point, you can create a `loop`, and receive events and match
     /// // their variants
@@ -133,12 +135,15 @@ impl Shard {
     /// ```
     pub fn new(
         ws_url: Arc<Mutex<String>>,
-        token: Arc<Mutex<String>>,
+        token: &str,
         shard_info: [u64; 2],
     ) -> Result<Shard> {
         let mut client = connect(&*ws_url.lock())?;
 
+        // Configure timeout and buffer sizes. See the respective
+        // methods for the reasoning behind changing the defaults.
         let _ = set_client_timeout(&mut client);
+        set_client_buffer_sizes(&mut client);
 
         let current_presence = (None, OnlineStatus::Online);
         let heartbeat_instants = (None, None);
@@ -158,7 +163,7 @@ impl Shard {
             seq,
             stage,
             started: Instant::now(),
-            token,
+            token: token.to_string(),
             session_id,
             shard_info,
             ws_url,
@@ -224,7 +229,7 @@ impl Shard {
             },
             Err(why) => {
                 match why {
-                    Error::WebSocket(WebSocketError::IoError(err)) => if err.raw_os_error() != Some(32) {
+                    Error::Tungstenite(TungsteniteError::Io(err)) => if err.raw_os_error() != Some(32) {
                         debug!("[Shard {:?}] Err heartbeating: {:?}",
                                self.shard_info,
                                err);
@@ -264,30 +269,29 @@ impl Shard {
     /// ```rust,no_run
     /// # #[cfg(feature = "model")]
     /// # fn main() {
-    /// # use serenity::client::gateway::Shard;
+    /// # use serenity::{client::gateway::Shard, prelude::Mutex};
     /// # use std::sync::Arc;
-    /// # use serenity::prelude::Mutex;
     /// #
     /// # let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// # let mut shard = Shard::new(mutex.clone(), mutex, [0, 1]).unwrap();
+    /// # let mut shard = Shard::new(mutex.clone(), "", [0, 1]).unwrap();
     /// #
-    /// use serenity::model::gateway::Game;
+    /// use serenity::model::gateway::Activity;
     ///
-    /// shard.set_game(Some(Game::playing("Heroes of the Storm")));
+    /// shard.set_activity(Some(Activity::playing("Heroes of the Storm")));
     /// # }
     /// #
     /// # #[cfg(not(feature = "model"))]
     /// # fn main() { }
     /// ```
     #[inline]
-    pub fn set_game(&mut self, game: Option<Game>) {
-        self.current_presence.0 = game;
+    pub fn set_activity(&mut self, activity: Option<Activity>) {
+        self.current_presence.0 = activity;
     }
 
     #[inline]
-    pub fn set_presence(&mut self, status: OnlineStatus, game: Option<Game>) {
-        self.set_game(game);
+    pub fn set_presence(&mut self, status: OnlineStatus, activity: Option<Activity>) {
+        self.set_activity(activity);
         self.set_status(status);
     }
 
@@ -313,7 +317,6 @@ impl Shard {
     /// Retrieving the shard info for the second shard, out of two shards total:
     ///
     /// ```rust,no_run
-    /// # extern crate serenity;
     /// # #[cfg(feature = "model")]
     /// # fn main() {
     /// # use serenity::client::gateway::Shard;
@@ -322,7 +325,7 @@ impl Shard {
     /// #
     /// # let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// # let shard = Shard::new(mutex.clone(), mutex, [1, 2]).unwrap();
+    /// # let mut shard = Shard::new(mutex.clone(), "", [0, 1]).unwrap();
     /// #
     /// assert_eq!(shard.shard_info(), [1, 2]);
     /// # }
@@ -335,6 +338,141 @@ impl Shard {
     /// Returns the current connection stage of the shard.
     pub fn stage(&self) -> ConnectionStage {
         self.stage
+    }
+
+    fn handle_gateway_dispatch(&mut self, seq: u64, event: &Event) -> Result<Option<ShardAction>> {
+        if seq > self.seq + 1 {
+            warn!("[Shard {:?}] Sequence off; them: {}, us: {}", self.shard_info, seq, self.seq);
+        }
+
+        match *event {
+            Event::Ready(ref ready) => {
+                debug!("[Shard {:?}] Received Ready", self.shard_info);
+
+                self.session_id = Some(ready.ready.session_id.clone());
+                self.stage = ConnectionStage::Connected;
+            },
+            Event::Resumed(_) => {
+                info!("[Shard {:?}] Resumed", self.shard_info);
+
+                self.stage = ConnectionStage::Connected;
+                self.last_heartbeat_acknowledged = true;
+                self.heartbeat_instants = (Some(Instant::now()), None);
+            },
+            _ => {},
+        }
+
+        self.seq = seq;
+
+        Ok(None)
+    }
+
+    fn handle_heartbeat_event(&mut self, s: u64) -> Result<Option<ShardAction>> {
+        info!("[Shard {:?}] Received shard heartbeat", self.shard_info);
+
+        // Received seq is off -- attempt to resume.
+        if s > self.seq + 1 {
+            info!(
+                "[Shard {:?}] Received off sequence (them: {}; us: {}); resuming",
+                self.shard_info,
+                s,
+                self.seq
+            );
+
+            if self.stage == ConnectionStage::Handshake {
+                self.stage = ConnectionStage::Identifying;
+
+                return Ok(Some(ShardAction::Identify));
+            } else {
+                warn!(
+                    "[Shard {:?}] Heartbeat during non-Handshake; auto-reconnecting",
+                    self.shard_info
+                );
+
+                return Ok(Some(ShardAction::Reconnect(self.reconnection_type())));
+            }
+        }
+
+        Ok(Some(ShardAction::Heartbeat))
+    }
+
+    fn handle_gateway_closed(&mut self, data: &Option<CloseFrame<'static>>) -> Result<Option<ShardAction>> {
+        let num = data.as_ref().map(|d| d.code.into());
+        let clean = num == Some(1000);
+
+        match num {
+            Some(close_codes::UNKNOWN_OPCODE) => {
+                warn!("[Shard {:?}] Sent invalid opcode",
+                        self.shard_info);
+            },
+            Some(close_codes::DECODE_ERROR) => {
+                warn!("[Shard {:?}] Sent invalid message",
+                        self.shard_info);
+            },
+            Some(close_codes::NOT_AUTHENTICATED) => {
+                warn!("[Shard {:?}] Sent no authentication",
+                        self.shard_info);
+
+                return Err(Error::Gateway(GatewayError::NoAuthentication));
+            },
+            Some(close_codes::AUTHENTICATION_FAILED) => {
+                warn!("Sent invalid authentication");
+
+                return Err(Error::Gateway(GatewayError::InvalidAuthentication));
+            },
+            Some(close_codes::ALREADY_AUTHENTICATED) => {
+                warn!("[Shard {:?}] Already authenticated",
+                        self.shard_info);
+            },
+            Some(close_codes::INVALID_SEQUENCE) => {
+                warn!("[Shard {:?}] Sent invalid seq: {}",
+                        self.shard_info,
+                        self.seq);
+
+                self.seq = 0;
+            },
+            Some(close_codes::RATE_LIMITED) => {
+                warn!("[Shard {:?}] Gateway ratelimited",
+                        self.shard_info);
+            },
+            Some(close_codes::INVALID_SHARD) => {
+                warn!("[Shard {:?}] Sent invalid shard data",
+                        self.shard_info);
+
+                return Err(Error::Gateway(GatewayError::InvalidShardData));
+            },
+            Some(close_codes::SHARDING_REQUIRED) => {
+                error!("[Shard {:?}] Shard has too many guilds",
+                        self.shard_info);
+
+                return Err(Error::Gateway(GatewayError::OverloadedShard));
+            },
+            Some(4006) | Some(close_codes::SESSION_TIMEOUT) => {
+                info!("[Shard {:?}] Invalid session", self.shard_info);
+
+                self.session_id = None;
+            },
+            Some(other) if !clean => {
+                warn!(
+                    "[Shard {:?}] Unknown unclean close {}: {:?}",
+                    self.shard_info,
+                    other,
+                    data.as_ref().map(|d| &d.reason),
+                );
+            },
+            _ => {},
+        }
+
+        let resume = num.map(|x| {
+            x != close_codes::AUTHENTICATION_FAILED &&
+            self.session_id.is_some()
+        }).unwrap_or(true);
+
+        Ok(Some(if resume {
+            ShardAction::Reconnect(ReconnectType::Resume)
+        } else {
+            ShardAction::Reconnect(ReconnectType::Reidentify)
+        }))
     }
 
     /// Handles an event from the gateway over the receiver, requiring the
@@ -361,64 +499,11 @@ impl Shard {
     ///
     /// Returns a `GatewayError::OverloadedShard` if the shard would have too
     /// many guilds assigned to it.
-    #[allow(cyclomatic_complexity)]
     pub(crate) fn handle_event(&mut self, event: &Result<GatewayEvent>)
         -> Result<Option<ShardAction>> {
         match *event {
-            Ok(GatewayEvent::Dispatch(seq, ref event)) => {
-                if seq > self.seq + 1 {
-                    warn!("[Shard {:?}] Sequence off; them: {}, us: {}", self.shard_info, seq, self.seq);
-                }
-
-                match *event {
-                    Event::Ready(ref ready) => {
-                        debug!("[Shard {:?}] Received Ready", self.shard_info);
-
-                        self.session_id = Some(ready.ready.session_id.clone());
-                        self.stage = ConnectionStage::Connected;
-                    },
-                    Event::Resumed(_) => {
-                        info!("[Shard {:?}] Resumed", self.shard_info);
-
-                        self.stage = ConnectionStage::Connected;
-                        self.last_heartbeat_acknowledged = true;
-                        self.heartbeat_instants = (Some(Instant::now()), None);
-                    },
-                    _ => {},
-                }
-
-                self.seq = seq;
-
-                Ok(None)
-            },
-            Ok(GatewayEvent::Heartbeat(s)) => {
-                info!("[Shard {:?}] Received shard heartbeat", self.shard_info);
-
-                // Received seq is off -- attempt to resume.
-                if s > self.seq + 1 {
-                    info!(
-                        "[Shard {:?}] Received off sequence (them: {}; us: {}); resuming",
-                        self.shard_info,
-                        s,
-                        self.seq
-                    );
-
-                    if self.stage == ConnectionStage::Handshake {
-                        self.stage = ConnectionStage::Identifying;
-
-                        return Ok(Some(ShardAction::Identify));
-                    } else {
-                        warn!(
-                            "[Shard {:?}] Heartbeat during non-Handshake; auto-reconnecting",
-                            self.shard_info
-                        );
-
-                        return Ok(Some(ShardAction::Reconnect(self.reconnection_type())));
-                    }
-                }
-
-                Ok(Some(ShardAction::Heartbeat))
-            },
+            Ok(GatewayEvent::Dispatch(seq, ref event)) => self.handle_gateway_dispatch(seq, event),
+            Ok(GatewayEvent::Heartbeat(s)) => self.handle_heartbeat_event(s),
             Ok(GatewayEvent::HeartbeatAck) => {
                 self.heartbeat_instants.1 = Some(Instant::now());
                 self.last_heartbeat_acknowledged = true;
@@ -464,91 +549,8 @@ impl Shard {
             Ok(GatewayEvent::Reconnect) => {
                 Ok(Some(ShardAction::Reconnect(ReconnectType::Reidentify)))
             },
-            Err(Error::Gateway(GatewayError::Closed(ref data))) => {
-                let num = data.as_ref().map(|d| d.status_code);
-                let clean = num == Some(1000);
-
-                match num {
-                    Some(close_codes::UNKNOWN_OPCODE) => {
-                        warn!("[Shard {:?}] Sent invalid opcode",
-                              self.shard_info);
-                    },
-                    Some(close_codes::DECODE_ERROR) => {
-                        warn!("[Shard {:?}] Sent invalid message",
-                              self.shard_info);
-                    },
-                    Some(close_codes::NOT_AUTHENTICATED) => {
-                        warn!("[Shard {:?}] Sent no authentication",
-                              self.shard_info);
-
-                        return Err(Error::Gateway(GatewayError::NoAuthentication));
-                    },
-                    Some(close_codes::AUTHENTICATION_FAILED) => {
-                        warn!("Sent invalid authentication");
-
-                        return Err(Error::Gateway(GatewayError::InvalidAuthentication));
-                    },
-                    Some(close_codes::ALREADY_AUTHENTICATED) => {
-                        warn!("[Shard {:?}] Already authenticated",
-                              self.shard_info);
-                    },
-                    Some(close_codes::INVALID_SEQUENCE) => {
-                        warn!("[Shard {:?}] Sent invalid seq: {}",
-                              self.shard_info,
-                              self.seq);
-
-                        self.seq = 0;
-                    },
-                    Some(close_codes::RATE_LIMITED) => {
-                        warn!("[Shard {:?}] Gateway ratelimited",
-                              self.shard_info);
-                    },
-                    Some(close_codes::INVALID_SHARD) => {
-                        warn!("[Shard {:?}] Sent invalid shard data",
-                              self.shard_info);
-
-                        return Err(Error::Gateway(GatewayError::InvalidShardData));
-                    },
-                    Some(close_codes::SHARDING_REQUIRED) => {
-                        error!("[Shard {:?}] Shard has too many guilds",
-                               self.shard_info);
-
-                        return Err(Error::Gateway(GatewayError::OverloadedShard));
-                    },
-                    Some(4006) | Some(close_codes::SESSION_TIMEOUT) => {
-                        info!("[Shard {:?}] Invalid session", self.shard_info);
-
-                        self.session_id = None;
-                    },
-                    Some(other) if !clean => {
-                        warn!(
-                            "[Shard {:?}] Unknown unclean close {}: {:?}",
-                            self.shard_info,
-                            other,
-                            data.as_ref().map(|d| &d.reason),
-                        );
-                    },
-                    _ => {},
-                }
-
-                let resume = num.map(|x| {
-                    x != close_codes::AUTHENTICATION_FAILED &&
-                    self.session_id.is_some()
-                }).unwrap_or(true);
-
-                Ok(Some(if resume {
-                    ShardAction::Reconnect(ReconnectType::Resume)
-                } else {
-                    ShardAction::Reconnect(ReconnectType::Reidentify)
-                }))
-            },
-            Err(Error::WebSocket(ref why)) => {
-                if let WebSocketError::NoDataAvailable = *why {
-                    if self.heartbeat_instants.1.is_none() {
-                        return Ok(None);
-                    }
-                }
-
+            Err(Error::Gateway(GatewayError::Closed(ref data))) => self.handle_gateway_closed(&data),
+            Err(Error::Tungstenite(ref why)) => {
                 warn!("[Shard {:?}] Websocket error: {:?}",
                       self.shard_info,
                       why);
@@ -677,9 +679,6 @@ impl Shard {
     /// specifying a query parameter:
     ///
     /// ```rust,no_run
-    /// # extern crate parking_lot;
-    /// # extern crate serenity;
-    /// #
     /// # use parking_lot::Mutex;
     /// # use serenity::client::gateway::Shard;
     /// # use std::error::Error;
@@ -688,7 +687,7 @@ impl Shard {
     /// # fn try_main() -> Result<(), Box<Error>> {
     /// #     let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// #     let mut shard = Shard::new(mutex.clone(), mutex, [0, 1])?;
+    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1])?;
     /// #
     /// use serenity::model::id::GuildId;
     ///
@@ -707,9 +706,6 @@ impl Shard {
     /// query parameter of `"do"`:
     ///
     /// ```rust,no_run
-    /// # extern crate parking_lot;
-    /// # extern crate serenity;
-    /// #
     /// # use parking_lot::Mutex;
     /// # use serenity::client::gateway::Shard;
     /// # use std::error::Error;
@@ -718,7 +714,7 @@ impl Shard {
     /// # fn try_main() -> Result<(), Box<Error>> {
     /// #     let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// #     let mut shard = Shard::new(mutex.clone(), mutex, [0, 1])?;
+    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1])?;
     /// #
     /// use serenity::model::id::GuildId;
     ///
@@ -757,7 +753,7 @@ impl Shard {
     // - the time that the last heartbeat sent as being now
     // - the `stage` to `Identifying`
     pub fn identify(&mut self) -> Result<()> {
-        self.client.send_identify(&self.shard_info, &self.token.lock())?;
+        self.client.send_identify(&self.shard_info, &self.token)?;
 
         self.heartbeat_instants.0 = Some(Instant::now());
         self.stage = ConnectionStage::Identifying;
@@ -810,8 +806,8 @@ impl Shard {
                 self.client.send_resume(
                     &self.shard_info,
                     session_id,
-                    &self.seq,
-                    &self.token.lock(),
+                    self.seq,
+                    &self.token,
                 )
             },
             None => Err(Error::Gateway(GatewayError::NoSessionId)),
@@ -835,19 +831,50 @@ impl Shard {
     }
 }
 
+#[cfg(not(feature = "native_tls_backend"))]
 fn connect(base_url: &str) -> Result<WsClient> {
     let url = build_gateway_url(base_url)?;
-    let client = ClientBuilder::from_url(&url).connect_secure(None)?;
+    Ok(create_rustls_client(url)?)
+}
 
-    Ok(client)
+#[cfg(feature = "native_tls_backend")]
+fn connect(base_url: &str) -> Result<WsClient> {
+    let url = build_gateway_url(base_url)?;
+    let client = tungstenite::connect(Request::from(url))?;
+
+    Ok(client.0)
 }
 
 fn set_client_timeout(client: &mut WsClient) -> Result<()> {
-    let stream = client.stream_ref().as_tcp();
-    stream.set_read_timeout(Some(StdDuration::from_millis(100)))?;
-    stream.set_write_timeout(Some(StdDuration::from_secs(5)))?;
+    #[cfg(not(feature = "native_tls_backend"))]
+    let stream = &client.get_mut().sock;
+
+    #[cfg(feature = "native_tls_backend")]
+    let stream = match client.get_mut() {
+        tungstenite::stream::Stream::Plain(stream) => stream,
+        tungstenite::stream::Stream::Tls(stream) => stream.get_mut(),
+    };
+
+    stream.set_read_timeout(Some(StdDuration::from_millis(500)))?;
+    stream.set_write_timeout(Some(StdDuration::from_secs(50)))?;
 
     Ok(())
+}
+
+fn set_client_buffer_sizes(client: &mut WsClient) {
+    // Despite chunking members inside larger guilds, Discord will
+    // still send us the online state of all members at the same time
+    // in a single frame. By default, tungstenite only allows frames
+    // with a maximum of 16mb at a time. Larger guilds can easily surpass
+    // this limit.
+    //
+    // Since we know all traffic is coming from a trusted source (Discord),
+    // we can remove the buffer limit entirely. This eliminates the issue
+    // where we have to keep upping buffer sizes because of growing guilds.
+    client.set_config(|c| {
+        c.max_frame_size = None;
+        c.max_message_size = None;
+    })
 }
 
 fn build_gateway_url(base: &str) -> Result<Url> {

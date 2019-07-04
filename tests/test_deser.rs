@@ -1,7 +1,3 @@
-extern crate serde;
-extern crate serde_json;
-extern crate serenity;
-
 use serde::de::Deserialize;
 use serde_json::Value;
 use serenity::model::prelude::*;
@@ -9,11 +5,27 @@ use std::fs::File;
 
 macro_rules! p {
     ($s:ident, $filename:expr) => {{
-        let f = File::open(concat!("./tests/resources/", $filename, ".json")).unwrap();
-        let v = serde_json::from_reader::<File, Value>(f).unwrap();
+        let f = File::open(concat!("./tests/resources/", $filename, ".json"))
+            .expect("Opening test file");
 
-        $s::deserialize(v).unwrap()
+        let v = serde_json::from_reader::<File, Value>(f).expect("Loading test file");
+
+        let deserialized = $s::deserialize(v).expect("Deserializing file");
+        let serialized = serde_json::to_string(&deserialized).expect("Reserializing file");
+        if serialized.len() > 327 {
+            println!("{}", &serialized[327..]);
+            println!("{}", &serialized[..]);
+        }
+        let redeserialized: $s = serde_json::from_str(&serialized).expect("Deserializing file (2)");
+        redeserialized
     }};
+}
+
+// An activity with null type.
+#[test]
+fn activity() {
+    p!(Activity, "activity_1");
+    p!(Activity, "activity_2");
 }
 
 #[test]
@@ -39,12 +51,6 @@ fn channel_update() {
 #[test]
 fn emoji_animated() {
     p!(Emoji, "emoji_animated");
-}
-
-// A game with null type.
-#[test]
-fn game() {
-    p!(Game, "game_1");
 }
 
 #[test]
@@ -73,6 +79,7 @@ fn guild_some_application_id() {
 #[test]
 fn guild_create() {
     p!(GuildCreateEvent, "guild_create_1");
+    p!(GuildCreateEvent, "guild_create_2");
 }
 
 #[test]

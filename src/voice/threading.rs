@@ -1,13 +1,15 @@
-use internal::Timer;
-use model::id::GuildId;
+use crate::internal::Timer;
+use crate::model::id::GuildId;
 use std::{
     sync::mpsc::{Receiver as MpscReceiver, TryRecvError},
     thread::Builder as ThreadBuilder
 };
 use super::{
     connection::Connection,
-    Status
+    Status,
+    audio,
 };
+use log::{error, warn};
 
 pub(crate) fn start(guild_id: GuildId, rx: MpscReceiver<Status>) {
     let name = format!("Serenity Voice (G{})", guild_id);
@@ -15,7 +17,7 @@ pub(crate) fn start(guild_id: GuildId, rx: MpscReceiver<Status>) {
     ThreadBuilder::new()
         .name(name)
         .spawn(move || runner(&rx))
-        .expect(&format!("[Voice] Error starting guild: {:?}", guild_id));
+        .unwrap_or_else(|_| panic!("[Voice] Error starting guild: {:?}", guild_id));
 }
 
 fn runner(rx: &MpscReceiver<Status>) {
@@ -23,6 +25,7 @@ fn runner(rx: &MpscReceiver<Status>) {
     let mut receiver = None;
     let mut connection = None;
     let mut timer = Timer::new(20);
+    let mut bitrate = audio::DEFAULT_BITRATE;
 
     'runner: loop {
         loop {
@@ -53,6 +56,9 @@ fn runner(rx: &MpscReceiver<Status>) {
                 Ok(Status::AddSender(s)) => {
                     senders.push(s);
                 },
+                Ok(Status::SetBitrate(b)) => {
+                    bitrate = b;
+                },
                 Err(TryRecvError::Empty) => {
                     // If we received nothing, then we can perform an update.
                     break;
@@ -73,7 +79,7 @@ fn runner(rx: &MpscReceiver<Status>) {
         // another event.
         let error = match connection.as_mut() {
             Some(connection) => {
-                let cycle = connection.cycle(&mut senders, &mut receiver, &mut timer);
+                let cycle = connection.cycle(&mut senders, &mut receiver, &mut timer, bitrate);
 
                 match cycle {
                     Ok(()) => false,
@@ -88,7 +94,7 @@ fn runner(rx: &MpscReceiver<Status>) {
                 }
             },
             None => {
-                timer.await();
+                timer.r#await();
 
                 false
             },
@@ -97,7 +103,10 @@ fn runner(rx: &MpscReceiver<Status>) {
         // If there was an error, then just reset the connection and try to get
         // another.
         if error {
-            connection = None;
+            let mut conn = connection.expect("[Voice] Shouldn't have had a voice connection error without a connection.");
+            connection = conn.reconnect()
+                .ok()
+                .map(|_| conn);
         }
     }
 }

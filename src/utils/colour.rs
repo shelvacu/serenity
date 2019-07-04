@@ -1,5 +1,5 @@
 // Disable this lint to avoid it wanting to change `0xABCDEF` to `0xAB_CDEF`.
-#![allow(unreadable_literal)]
+#![allow(clippy::unreadable_literal)]
 
 macro_rules! colour {
     ($(#[$attr:meta] $constname:ident, $name:ident, $val:expr;)*) => {
@@ -7,14 +7,6 @@ macro_rules! colour {
             $(
                 #[$attr]
                 pub const $constname: Colour = Colour($val);
-            )*
-
-            $(
-                #[$attr]
-                #[deprecated(note = "Use the constant instead", since = "0.5.5")]
-                pub fn $name() -> Colour {
-                    Colour::new($val)
-                }
             )*
         }
     }
@@ -34,20 +26,25 @@ macro_rules! colour {
 /// via [`g`]:
 ///
 /// ```rust
+/// # extern crate serde_json;
+/// # extern crate serenity;
+/// #
+/// # use serde_json::json;
 /// # use serenity::model::guild::Role;
 /// # use serenity::model::id::RoleId;
 /// # use serenity::model::permissions;
 /// #
-/// # let role = Role {
-/// #     colour: Colour::BLURPLE,
-/// #     hoist: false,
-/// #     id: RoleId(1),
-/// #     managed: false,
-/// #     mentionable: false,
-/// #     name: "test".to_string(),
-/// #     permissions: permissions::PRESET_GENERAL,
-/// #     position: 7,
-/// # };
+/// # fn main() {
+/// # let role = serde_json::from_value::<Role>(json!({
+/// #     "color": Colour::BLURPLE,
+/// #     "hoist": false,
+/// #     "id": RoleId(1),
+/// #     "managed": false,
+/// #     "mentionable": false,
+/// #     "name": "test",
+/// #     "permissions": permissions::PRESET_GENERAL,
+/// #     "position": 7,
+/// # })).unwrap();
 /// #
 /// use serenity::utils::Colour;
 ///
@@ -56,6 +53,7 @@ macro_rules! colour {
 /// let green = role.colour.g();
 ///
 /// println!("The green component is: {}", green);
+/// # }
 /// ```
 ///
 /// Creating an instance with the [`DARK_TEAL`] preset:
@@ -105,7 +103,7 @@ impl Colour {
     ///
     /// [`tuple`]: #method.tuple
     #[inline]
-    pub fn new(value: u32) -> Colour { Colour(value) }
+    pub const fn new(value: u32) -> Colour { Colour(value) }
 
     /// Generates a new Colour from an RGB value, creating an inner u32
     /// representation.
@@ -133,12 +131,11 @@ impl Colour {
     /// assert_eq!(colour.b(), 215);
     /// assert_eq!(colour.tuple(), (217, 45, 215));
     /// ```
-    pub fn from_rgb(red: u8, green: u8, blue: u8) -> Colour {
-        let mut uint = u32::from(red);
-        uint = (uint << 8) | (u32::from(green));
-        uint = (uint << 8) | (u32::from(blue));
-
-        Colour(uint)
+    // Clippy wants to use `u32::from` instead `as`-casts,
+    // but this not doable as `u32::from` is not a const fn.
+    #[allow(clippy::cast_lossless)]
+    pub const fn from_rgb(red: u8, green: u8, blue: u8) -> Colour {
+        Colour((red as u32) << 16 | (green as u32) << 8 | blue as u32)
     }
 
     /// Returns the red RGB component of this Colour.
@@ -150,7 +147,7 @@ impl Colour {
     ///
     /// assert_eq!(Colour::new(6573123).r(), 100);
     /// ```
-    pub fn r(&self) -> u8 { ((self.0 >> 16) & 255) as u8 }
+    pub const fn r(self) -> u8 { ((self.0 >> 16) & 255) as u8 }
 
     /// Returns the green RGB component of this Colour.
     ///
@@ -161,7 +158,7 @@ impl Colour {
     ///
     /// assert_eq!(Colour::new(6573123).g(), 76);
     /// ```
-    pub fn g(&self) -> u8 { ((self.0 >> 8) & 255) as u8 }
+    pub const fn g(self) -> u8 { ((self.0 >> 8) & 255) as u8 }
 
     /// Returns the blue RGB component of this Colour.
     ///
@@ -171,7 +168,7 @@ impl Colour {
     /// use serenity::utils::Colour;
     ///
     /// assert_eq!(Colour::new(6573123).b(), 67);
-    pub fn b(&self) -> u8 { (self.0 & 255) as u8 }
+    pub const fn b(self) -> u8 { (self.0 & 255) as u8 }
 
     /// Returns a tuple of the red, green, and blue components of this Colour.
     ///
@@ -189,12 +186,12 @@ impl Colour {
     /// [`r`]: #method.r
     /// [`g`]: #method.g
     /// [`b`]: #method.b
-    pub fn tuple(&self) -> (u8, u8, u8) { (self.r(), self.g(), self.b()) }
+    pub const fn tuple(self) -> (u8, u8, u8) { (self.r(), self.g(), self.b()) }
 
     /// Returns a hexadecimal string of this Colour.
     ///
     /// This is equivalent to passing the integer value through
-    /// `std::fmt::UpperHex` with 0 padding and 6 width
+    /// `std::fmt::UpperHex` with 0 padding and 6 width.
     ///
     /// # Examples
     ///
@@ -203,7 +200,7 @@ impl Colour {
     ///
     /// assert_eq!(Colour::new(6573123).hex(), "644C43");
     /// ```
-    pub fn hex(&self) -> String {
+    pub fn hex(self) -> String {
         format!("{:06X}", self.0)
     }
 }
@@ -256,7 +253,7 @@ impl From<u64> for Colour {
 }
 
 impl From<(u8, u8, u8)> for Colour {
-    /// Constructs a Colour from rgb.
+    /// Constructs a Colour from RGB.
     fn from((red, green, blue): (u8, u8, u8)) -> Self {
         Colour::from_rgb(red, green, blue)
     }
@@ -291,7 +288,7 @@ colour! {
     DARKER_GREY, darker_grey, 0x546E7A;
     /// Creates a new `Colour`, setting its RGB value to `(250, 177, 237)`.
     FABLED_PINK, fabled_pink, 0xFAB1ED;
-    /// Creates a new `Colour`, setting its RGB value to `(136, 130, 196)`.`
+    /// Creates a new `Colour`, setting its RGB value to `(136, 130, 196)`.
     FADED_PURPLE, faded_purple, 0x8882C4;
     /// Creates a new `Colour`, setting its RGB value to `(17, 202, 128)`.
     FOOYOO, fooyoo, 0x11CA80;

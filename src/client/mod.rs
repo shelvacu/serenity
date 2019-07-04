@@ -17,7 +17,6 @@
 //! [`Client`]: struct.Client.html#examples
 //! [`Context`]: struct.Context.html
 //! [Client examples]: struct.Client.html#examples
-#![allow(zero_ptr)]
 
 pub mod bridge;
 
@@ -29,30 +28,41 @@ mod event_handler;
 pub use self::{
     context::Context,
     error::Error as ClientError,
-    event_handler::EventHandler
+    event_handler::{EventHandler, RawEventHandler},
 };
 
+#[cfg(any(feature = "cache", feature = "http"))]
+pub use crate::CacheAndHttp;
+
 // Note: the following re-exports are here for backwards compatibility
-pub use gateway;
-pub use http as rest;
+pub use crate::gateway;
+pub use crate::http as rest;
 
 #[cfg(feature = "cache")]
-pub use CACHE;
+pub use crate::cache::{Cache, CacheRwLock};
 
-use http;
-use internal::prelude::*;
+use crate::internal::prelude::*;
 use parking_lot::Mutex;
+use parking_lot::RwLock;
 use self::bridge::gateway::{ShardManager, ShardManagerMonitor, ShardManagerOptions};
 use std::sync::Arc;
 use threadpool::ThreadPool;
 use typemap::ShareMap;
+use log::{error, debug, info};
 
 #[cfg(feature = "framework")]
-use framework::Framework;
+use crate::framework::Framework;
 #[cfg(feature = "voice")]
-use model::id::UserId;
+use crate::model::id::UserId;
 #[cfg(feature = "voice")]
 use self::bridge::voice::ClientVoiceManager;
+#[cfg(feature = "http")]
+use crate::http::Http;
+#[cfg(feature = "cache")]
+use std::time::Duration;
+
+struct DummyRawEventHandler;
+impl RawEventHandler for DummyRawEventHandler {}
 
 /// The Client is the way to be able to start sending authenticated requests
 /// over the REST API, as well as initializing a WebSocket connection through
@@ -74,7 +84,6 @@ use self::bridge::voice::ClientVoiceManager;
 /// receive, acting as a "ping-pong" bot is simple:
 ///
 /// ```no_run
-/// # fn main() {
 /// use serenity::prelude::*;
 /// use serenity::model::prelude::*;
 /// use serenity::Client;
@@ -82,9 +91,9 @@ use self::bridge::voice::ClientVoiceManager;
 /// struct Handler;
 ///
 /// impl EventHandler for Handler {
-///     fn message(&self, _: Context, msg: Message) {
+///     fn message(&self, context: Context, msg: Message) {
 ///         if msg.content == "!ping" {
-///             let _ = msg.channel_id.say("Pong!");
+///             let _ = msg.channel_id.say(&context, "Pong!");
 ///         }
 ///     }
 /// }
@@ -92,7 +101,6 @@ use self::bridge::voice::ClientVoiceManager;
 /// let mut client = Client::new("my token here", Handler).expect("Could not create new client.");
 ///
 /// client.start().expect("Could not start client.");
-/// # }
 /// ```
 ///
 /// [`Shard`]: ../gateway/struct.Shard.html
@@ -121,26 +129,23 @@ pub struct Client {
     /// - [`Event::MessageDeleteBulk`]
     /// - [`Event::MessageUpdate`]
     ///
-    /// ```no_run
-    /// extern crate serenity;
-    /// extern crate typemap;
-    ///
+    /// ```rust,ignore
     /// // Of note, this imports `typemap`'s `Key` as `TypeMapKey`.
     /// use serenity::prelude::*;
-    /// use serenity::model::prelude::*;
-    /// use typemap::Key;
-    /// use std::{collections::HashMap, env};
+    /// use serenity::model::*;
+    /// use std::collections::HashMap;
+    /// use std::env;
     ///
     /// struct MessageEventCounter;
     ///
-    /// impl Key for MessageEventCounter {
+    /// impl TypeMapKey for MessageEventCounter {
     ///     type Value = HashMap<String, u64>;
     /// }
     ///
     /// fn reg<S>(ctx: Context, name: S)
     ///   where S: Into<std::string::String>
     /// {
-    ///     let mut data = ctx.data.lock();
+    ///     let mut data = ctx.data.write();
     ///     let counter = data.get_mut::<MessageEventCounter>().unwrap();
     ///     let entry = counter.entry(name.into()).or_insert(0);
     ///     *entry += 1;
@@ -166,7 +171,7 @@ pub struct Client {
     ///     .expect("Could not create client.");
     ///
     /// {
-    ///     let mut data = client.data.lock();
+    ///     let mut data = client.data.write();
     ///     data.insert::<MessageEventCounter>(HashMap::default());
     /// }
     ///
@@ -182,14 +187,14 @@ pub struct Client {
     /// [`Event::MessageDeleteBulk`]: ../model/event/enum.Event.html#variant.MessageDeleteBulk
     /// [`Event::MessageUpdate`]: ../model/event/enum.Event.html#variant.MessageUpdate
     /// [example 05]: https://github.com/serenity-rs/serenity/tree/current/examples/05_command_framework
-    pub data: Arc<Mutex<ShareMap>>,
+    pub data: Arc<RwLock<ShareMap>>,
     /// A vector of all active shards that have received their [`Event::Ready`]
     /// payload, and have dispatched to [`on_ready`] if an event handler was
     /// configured.
     ///
     /// [`Event::Ready`]: ../model/event/enum.Event.html#variant.Ready
     /// [`on_ready`]: #method.on_ready
-    #[cfg(feature = "framework")] framework: Arc<Mutex<Option<Box<Framework + Send>>>>,
+    #[cfg(feature = "framework")] framework: Arc<Mutex<Option<Box<dyn Framework + Send>>>>,
     /// A HashMap of all shards instantiated by the Client.
     ///
     /// The key is the shard ID and the value is the shard itself.
@@ -288,8 +293,6 @@ pub struct Client {
     /// Defaults to 5 threads, which should suffice small bots. Consider
     /// increasing this number as your bot grows.
     pub threadpool: ThreadPool,
-    /// The token in use by the client.
-    pub token: Arc<Mutex<String>>,
     /// The voice manager for the client.
     ///
     /// This is an ergonomic structure for interfacing over shards' voice
@@ -304,6 +307,7 @@ pub struct Client {
     /// This is wrapped in an `Arc<Mutex<T>>` so all shards will have an updated
     /// value available.
     pub ws_uri: Arc<Mutex<String>>,
+    pub cache_and_http: Arc<CacheAndHttp>,
 }
 
 impl Client {
@@ -338,16 +342,24 @@ impl Client {
     /// ```
     pub fn new<H>(token: &str, handler: H) -> Result<Self>
         where H: EventHandler + Send + Sync + 'static {
+
+        Self::new_with_handlers(token, Some(handler), None::<DummyRawEventHandler>)
+    }
+    /// Creates a client with an optional Handler. If you pass `None`, events are never parsed, but
+    /// they can be received by registering a RawHandler.
+    pub fn new_with_handlers<H, RH>(token: &str, handler: Option<H>, raw_handler: Option<RH>) -> Result<Self>
+        where H: EventHandler + Send + Sync + 'static,
+              RH: RawEventHandler + Send + Sync + 'static {
         let token = token.trim().to_string();
 
-        http::set_token(&token);
-        let locked = Arc::new(Mutex::new(token));
+        let http = Http::new_with_token(&token);
 
         let name = "serenity client".to_owned();
         let threadpool = ThreadPool::with_name(name, 5);
-        let url = Arc::new(Mutex::new(http::get_gateway()?.url));
-        let data = Arc::new(Mutex::new(ShareMap::custom()));
-        let event_handler = Arc::new(handler);
+        let url = Arc::new(Mutex::new(http.get_gateway()?.url));
+        let data = Arc::new(RwLock::new(ShareMap::custom()));
+        let event_handler = handler.map(Arc::new);
+        let raw_event_handler = raw_handler.map(Arc::new);
 
         #[cfg(feature = "framework")]
         let framework = Arc::new(Mutex::new(None));
@@ -357,25 +369,35 @@ impl Client {
             UserId(0),
         )));
 
+        let cache_and_http = Arc::new(CacheAndHttp {
+            #[cfg(feature = "cache")]
+            cache: Arc::new(RwLock::new(Cache::default())),
+            #[cfg(feature = "cache")]
+            update_cache_timeout: None,
+            #[cfg(feature = "http")]
+            http: Arc::new(http),
+            __nonexhaustive: (),
+        });
+
         let (shard_manager, shard_manager_worker) = {
             ShardManager::new(ShardManagerOptions {
                 data: &data,
                 event_handler: &event_handler,
+                raw_event_handler: &raw_event_handler,
                 #[cfg(feature = "framework")]
                 framework: &framework,
                 shard_index: 0,
                 shard_init: 0,
                 shard_total: 0,
                 threadpool: threadpool.clone(),
-                token: &locked,
                 #[cfg(feature = "voice")]
                 voice_manager: &voice_manager,
                 ws_url: &url,
+                cache_and_http: &cache_and_http,
             })
         };
 
         Ok(Client {
-            token: locked,
             ws_uri: url,
             #[cfg(feature = "framework")]
             framework,
@@ -385,6 +407,108 @@ impl Client {
             threadpool,
             #[cfg(feature = "voice")]
             voice_manager,
+            cache_and_http,
+        })
+    }
+
+    /// Creates a Client for a bot user and sets a cache update timeout.
+    /// If set to some duration, updating the cache will try to claim a
+    /// write-lock for given duration and skip received event but also
+    /// issue a deadlock-warning upon failure.
+    /// If `duration` is set to `None`, updating the cache will try to claim
+    /// a write-lock until success and potentially deadlock.
+    ///
+    /// Discord has a requirement of prefixing bot tokens with `"Bot "`, which
+    /// this function will automatically do for you if not already included.
+    ///
+    /// # Examples
+    ///
+    /// Create a Client, using a token from an environment variable:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::prelude::EventHandler;
+    /// struct Handler;
+    ///
+    /// impl EventHandler for Handler {}
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::Client;
+    /// use std::env;
+    ///
+    /// let token = env::var("DISCORD_TOKEN")?;
+    /// let client = Client::new_with_cache_update_timeout(&token, Handler, None)?;
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #    try_main().unwrap();
+    /// # }
+    /// ```
+    #[cfg(all(feature = "cache", feature = "http"))]
+    pub fn new_with_cache_update_timeout<H>(token: &str, handler: H, duration: Option<Duration>) -> Result<Self>
+        where H: EventHandler + Send + Sync + 'static {
+        let token = token.trim();
+
+        let token = if token.starts_with("Bot ") {
+            token.to_string()
+        } else {
+            format!("Bot {}", token)
+        };
+
+        let http = Http::new_with_token(&token);
+
+        let name = "serenity client".to_owned();
+        let threadpool = ThreadPool::with_name(name, 5);
+        let url = Arc::new(Mutex::new(http.get_gateway()?.url));
+        let data = Arc::new(RwLock::new(ShareMap::custom()));
+        let event_handler = Some(Arc::new(handler));
+
+        #[cfg(feature = "framework")]
+        let framework = Arc::new(Mutex::new(None));
+        #[cfg(feature = "voice")]
+        let voice_manager = Arc::new(Mutex::new(ClientVoiceManager::new(
+            0,
+            UserId(0),
+        )));
+
+        let cache_and_http = Arc::new(CacheAndHttp {
+            cache: Arc::new(RwLock::new(Cache::default())),
+            update_cache_timeout: duration,
+            #[cfg(feature = "http")]
+            http: Arc::new(http),
+            __nonexhaustive: (),
+        });
+
+        let (shard_manager, shard_manager_worker) = {
+            ShardManager::new(ShardManagerOptions {
+                data: &data,
+                event_handler: &event_handler,
+                raw_event_handler: &None::<Arc<DummyRawEventHandler>>,
+                #[cfg(feature = "framework")]
+                framework: &framework,
+                shard_index: 0,
+                shard_init: 0,
+                shard_total: 0,
+                threadpool: threadpool.clone(),
+                #[cfg(feature = "voice")]
+                voice_manager: &voice_manager,
+                ws_url: &url,
+                cache_and_http: &cache_and_http,
+            })
+        };
+
+        Ok(Client {
+            ws_uri: url,
+            #[cfg(feature = "framework")]
+            framework,
+            data,
+            shard_manager,
+            shard_manager_worker,
+            threadpool,
+            #[cfg(feature = "voice")]
+            voice_manager,
+            cache_and_http,
         })
     }
 
@@ -403,23 +527,38 @@ impl Client {
     /// # use serenity::prelude::EventHandler;
     /// # use std::error::Error;
     /// #
-    /// use serenity::framework::StandardFramework;
-    ///
     /// struct Handler;
     ///
     /// impl EventHandler for Handler {}
-    /// # fn try_main() -> Result<(), Box<Error>> {
-    /// use serenity::Client;
+    ///
     /// use std::env;
+    ///
+    /// use serenity::framework::StandardFramework;
+    /// use serenity::client::{Client, Context};
+    /// use serenity::model::channel::Message;
+    /// use serenity::framework::standard::{CommandResult, macros::{group, command}};
+    ///
+    /// #[command]
+    /// fn ping(ctx: &mut Context, msg: &Message) -> CommandResult {
+    ///     msg.channel_id.say(&ctx.http, "Pong!")?;
+    ///     Ok(())
+    /// }
+    ///
+    /// // Commands must be intermediately handled through groups.
+    /// group!({
+    ///     name: "pingpong",
+    ///     options: {},
+    ///     commands: [ping],
+    /// });
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
     ///
     /// let mut client = Client::new(&env::var("DISCORD_TOKEN")?, Handler)?;
     /// client.with_framework(StandardFramework::new()
     ///     .configure(|c| c.prefix("~"))
-    ///     .on("ping", |_, msg, _| {
-    ///         msg.channel_id.say("Pong!")?;
-    ///
-    ///         Ok(())
-    ///      }));
+    ///     // The macros generate instances of command and group structs, which reside as `static` variables.
+    ///     // Hence the uppercase name, and the suffix for distinguishment.
+    ///     .group(&PINGPONG_GROUP));
     /// # Ok(())
     /// # }
     /// #
@@ -448,7 +587,7 @@ impl Client {
     /// impl Framework for MyFramework {
     ///     fn dispatch(&mut self, _: Context, msg: Message, tokio_handle: &Handle) {
     ///         let args = msg.content.split_whitespace();
-    ///         let command = match args.next() {
+    ///         let command = match args.advance() {
     ///             Some(command) => {
     ///                 if !command.starts_with('*') { return; }
     ///                 command
@@ -537,6 +676,7 @@ impl Client {
     /// ```
     ///
     /// [gateway docs]: ../gateway/index.html#sharding
+    #[cfg(feature = "http")]
     pub fn start(&mut self) -> Result<()> {
         self.start_connection([0, 0, 1])
     }
@@ -589,9 +729,10 @@ impl Client {
     ///
     /// [`ClientError::Shutdown`]: enum.ClientError.html#variant.Shutdown
     /// [gateway docs]: ../gateway/index.html#sharding
+    #[cfg(feature = "http")]
     pub fn start_autosharded(&mut self) -> Result<()> {
         let (x, y) = {
-            let res = http::get_bot_gateway()?;
+            let res = self.cache_and_http.http.get_bot_gateway()?;
 
             (res.shards as u64 - 1, res.shards as u64)
         };
@@ -676,6 +817,7 @@ impl Client {
     /// [`start`]: #method.start
     /// [`start_autosharded`]: #method.start_autosharded
     /// [gateway docs]: ../gateway/index.html#sharding
+    #[cfg(feature = "http")]
     pub fn start_shard(&mut self, shard: u64, shards: u64) -> Result<()> {
         self.start_connection([shard, shard, shards])
     }
@@ -730,6 +872,7 @@ impl Client {
     /// [`start_shard`]: #method.start_shard
     /// [`start_shard_range`]: #method.start_shard_range
     /// [Gateway docs]: ../gateway/index.html#sharding
+    #[cfg(feature = "http")]
     pub fn start_shards(&mut self, total_shards: u64) -> Result<()> {
         self.start_connection([0, total_shards - 1, total_shards])
     }
@@ -800,6 +943,7 @@ impl Client {
     /// [`start_shard`]: #method.start_shard
     /// [`start_shards`]: #method.start_shards
     /// [Gateway docs]: ../gateway/index.html#sharding
+    #[cfg(feature = "http")]
     pub fn start_shard_range(&mut self, range: [u64; 2], total_shards: u64) -> Result<()> {
         self.start_connection([range[0], range[1], total_shards])
     }
@@ -817,33 +961,16 @@ impl Client {
     // an error.
     //
     // [`ClientError::Shutdown`]: enum.ClientError.html#variant.Shutdown
+    #[cfg(feature = "http")]
     fn start_connection(&mut self, shard_data: [u64; 3]) -> Result<()> {
         #[cfg(feature = "voice")]
         self.voice_manager.lock().set_shard_count(shard_data[2]);
 
-        // This is kind of gross, but oh well.
-        //
-        // Both the framework and voice bridge need the user's ID, so we'll only
-        // retrieve it over REST if at least one of those are enabled.
-        #[cfg(any(all(feature = "standard_framework", feature = "framework"),
-                  feature = "voice"))]
+        #[cfg(feature = "voice")]
         {
-            let user = http::get_current_user()?;
+            let user = self.cache_and_http.http.get_current_user()?;
 
-            // Update the framework's current user if the feature is enabled.
-            //
-            // This also acts as a form of check to ensure the token is correct.
-            #[cfg(all(feature = "standard_framework", feature = "framework"))]
-            {
-                if let Some(ref mut framework) = *self.framework.lock() {
-                    framework.update_current_user(user.id);
-                }
-            }
-
-            #[cfg(feature = "voice")]
-            {
-                self.voice_manager.lock().set_user_id(user.id);
-            }
+            self.voice_manager.lock().set_user_id(user.id);
         }
 
         {

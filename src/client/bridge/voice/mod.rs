@@ -1,9 +1,9 @@
-use gateway::InterMessage;
+use crate::gateway::InterMessage;
 use std::collections::HashMap;
 use std::sync::mpsc::Sender as MpscSender;
-use ::model::id::{ChannelId, GuildId, UserId};
-use ::voice::{Handler, Manager};
-use ::utils;
+use crate::model::id::{ChannelId, GuildId, UserId};
+use crate::voice::{Handler, Manager};
+use crate::utils;
 
 pub struct ClientVoiceManager {
     managers: HashMap<u64, Manager>,
@@ -96,16 +96,16 @@ impl ClientVoiceManager {
         self.user_id = user_id;
     }
 
-    pub fn manager_get(&self, shard_id: &u64) -> Option<&Manager> {
-        self.managers.get(shard_id)
+    pub fn manager_get(&self, shard_id: u64) -> Option<&Manager> {
+        self.managers.get(&shard_id)
     }
 
-    pub fn manager_get_mut(&mut self, shard_id: &u64) -> Option<&mut Manager> {
-        self.managers.get_mut(shard_id)
+    pub fn manager_get_mut(&mut self, shard_id: u64) -> Option<&mut Manager> {
+        self.managers.get_mut(&shard_id)
     }
 
-    pub fn manager_remove(&mut self, shard_id: &u64) -> Option<Manager> {
-        self.managers.remove(shard_id)
+    pub fn manager_remove(&mut self, shard_id: u64) -> Option<Manager> {
+        self.managers.remove(&shard_id)
     }
 
     fn manager_info<G: Into<GuildId>>(&self, guild_id: G) -> (GuildId, u64) {

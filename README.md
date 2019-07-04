@@ -1,4 +1,4 @@
-[![ci-badge][]][ci] [![docs-badge][]][docs] [![guild-badge][]][guild] [![crates.io version]][crates.io link] [![rust 1.31.1+ badge]][rust 1.31.1+ link]
+[![ci-badge][]][ci] [![docs-badge][]][docs] [![guild-badge][]][guild] [![crates.io version]][crates.io link] [![rust 1.35.0+ badge]][rust 1.35.0+ link]
 
 # serenity
 
@@ -39,11 +39,24 @@ docs.
 A basic ping-pong bot looks like:
 
 ```rust,ignore
-#[macro_use] extern crate serenity;
-
 use serenity::client::Client;
-use serenity::prelude::EventHandler;
-use serenity::framework::standard::StandardFramework;
+use serenity::model::channel::Message;
+use serenity::prelude::{EventHandler, Context};
+use serenity::framework::standard::{
+    StandardFramework,
+    CommandResult,
+    macros::{
+        command,
+        group
+    }
+};
+
+group!({
+    name: "general",
+    options: {},
+    commands: [ping],
+});
+
 use std::env;
 
 struct Handler;
@@ -56,7 +69,7 @@ fn main() {
         .expect("Error creating client");
     client.with_framework(StandardFramework::new()
         .configure(|c| c.prefix("~")) // set the bot's prefix to "~"
-        .cmd("ping", ping));
+        .group(&GENERAL_GROUP));
 
     // start listening for events by starting a single shard
     if let Err(why) = client.start() {
@@ -64,9 +77,13 @@ fn main() {
     }
 }
 
-command!(ping(_context, message) {
-    let _ = message.reply("Pong!");
-});
+#[command]
+fn ping(ctx: &mut Context, msg: &Message) -> CommandResult {
+    msg.reply(ctx, "Pong!")?;
+
+    Ok(())
+}
+
 ```
 
 ### Full Examples
@@ -80,16 +97,10 @@ Add the following to your `Cargo.toml` file:
 
 ```toml
 [dependencies]
-serenity = "0.5"
+serenity = "0.6"
 ```
 
-and to the top of your `main.rs`:
-
-```rust,ignore
-#[macro_use] extern crate serenity;
-```
-
-Serenity supports a minimum of Rust 1.31.1.
+Serenity supports a minimum of Rust 1.34.2.
 
 # Features
 
@@ -100,11 +111,11 @@ Cargo.toml:
 [dependencies.serenity]
 default-features = false
 features = ["pick", "your", "feature", "names", "here"]
-version = "0.5"
+version = "0.6"
 ```
 
 The default features are: `builder`, `cache`, `client`, `framework`, `gateway`,
-`http`, `model`, `standard_framework`, and `utils`.
+`http`, `model`, `standard_framework`, `utils`, and `rustls_backend`.
 
 The following is a full list of features:
 
@@ -126,6 +137,17 @@ the HTTP functions.
 - **utils**: Utility functions for common use cases by users.
 - **voice**: Enables compilation of voice support, so that voice channels can be
 connected to and audio can be sent/received.
+- **default_native_tls**: Default features but using `native_tls_backend`
+instead of `rustls_backend`.
+
+Serenity offers two TLS-backends, `rustls_backend` by default, you need to pick
+one if you do not use the default features:
+
+- **rustls_backend**: Uses Rustls for all platforms, a pure Rust
+TLS implementation.
+- **native_tls_backend**: Uses SChannel on Windows, Secure Transport on macOS,
+and OpenSSL on other platforms.
+
 
 If you want all of the default features except for `cache` for example, you can
 list all but that:
@@ -142,33 +164,31 @@ features = [
     "model",
     "standard_framework",
     "utils",
+    "rustls_backend",
 ]
-version = "0.5"
+version = "0.6"
 ```
 
 # Dependencies
 
-Serenity requires the following system dependencies:
+If you use the `native_tls_backend` and you are not developing on macOS or Windows, you will need:
 
 - openssl
 
-### Voice
-
-The following dependencies all require the **voice** feature to be enabled in
-your Cargo.toml:
+If you want to use `voice`, Serenity will attempt to build these for you:
 
 - libsodium (Arch: `community/libsodium`)
 - opus (Arch: `extra/opus`)
 
-Voice+ffmpeg:
+In case the automated building fails, you may report it to us, but installing should fix it.
+
+Voice + ffmpeg:
 
 - ffmpeg (Arch: `extra/ffmpeg`)
 
-Voice+youtube-dl:
+Voice + youtube-dl:
 
 - youtube-dl (Arch: `community/youtube-dl`)
-
-Building the `voice`-feature on Windows can be done by following these instructions: https://github.com/serenity-rs/serenity/wiki/Voice-on-Windows
 
 # Related Projects
 
@@ -191,7 +211,7 @@ Building the `voice`-feature on Windows can be done by following these instructi
 [`validate_token`]: https://docs.rs/serenity/*/serenity/client/fn.validate_token.html
 [cache docs]: https://docs.rs/serenity/*/serenity/cache/index.html
 [ci]: https://dev.azure.com/serenity-org/serenity/_build?definitionId=1
-[ci-badge]: https://img.shields.io/azure-devops/build/serenity-org/1ce9579e-03bc-499f-9302-4180a2dfec6f/1/current.svg?style=flat-square
+[ci-badge]: https://img.shields.io/azure-devops/build/serenity-org/1ce9579e-03bc-499f-9302-4180a2dfec6f/1/v0.6.x.svg?style=flat-square
 [client's module-level documentation]: https://docs.rs/serenity/*/serenity/client/index.html
 [crates.io link]: https://crates.io/crates/serenity
 [crates.io version]: https://img.shields.io/crates/v/serenity.svg?style=flat-square
@@ -209,5 +229,5 @@ Building the `voice`-feature on Windows can be done by following these instructi
 [library:discord.js]: https://github.com/hydrabolt/discord.js
 [library:discord.py]: https://github.com/Rapptz/discord.py
 [logo]: https://raw.githubusercontent.com/serenity-rs/serenity/current/logo.png
-[rust 1.31.1+ badge]: https://img.shields.io/badge/rust-1.31.1+-93450a.svg?style=flat-square
-[rust 1.31.1+ link]: https://blog.rust-lang.org/2018/12/20/Rust-1.31.1.html
+[rust 1.35.0+ badge]: https://img.shields.io/badge/rust-1.35.0+-93450a.svg?style=flat-square
+[rust 1.35.0+ link]: https://blog.rust-lang.org/2019/05/23/Rust-1.35.0.html

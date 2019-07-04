@@ -73,12 +73,14 @@ use std::{
     sync::mpsc::Sender,
     time::Duration as StdDuration
 };
-use ::gateway::{ConnectionStage, InterMessage};
+use crate::gateway::{ConnectionStage, InterMessage};
 
 /// A message either for a [`ShardManager`] or a [`ShardRunner`].
 ///
 /// [`ShardManager`]: struct.ShardManager.html
 /// [`ShardRunner`]: struct.ShardRunner.html
+// Once we can use `Box` as part of a pattern, we will reconsider boxing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum ShardClientMessage {
     /// A message intended to be worked with by a [`ShardManager`].
@@ -144,7 +146,7 @@ pub enum ShardQueuerMessage {
 pub struct ShardId(pub u64);
 
 impl Display for ShardId {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}", self.0)
     }
 }

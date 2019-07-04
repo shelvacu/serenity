@@ -16,7 +16,7 @@ use std::{
 /// [`Error`]: ../enum.Error.html
 /// [`Error::Client`]: ../enum.Error.html#variant.Client
 /// [`GuildId::ban`]: ../model/id/struct.GuildId.html#method.ban
-#[allow(enum_variant_names)]
+#[allow(clippy::enum_variant_names)]
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Error {
     /// When the token provided is invalid. This is returned when validating a
@@ -30,10 +30,12 @@ pub enum Error {
     /// When all shards that the client is responsible for have shutdown with an
     /// error.
     Shutdown,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult { f.write_str(self.description()) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult { f.write_str(self.description()) }
 }
 
 impl StdError for Error {
@@ -42,6 +44,7 @@ impl StdError for Error {
             Error::InvalidToken => "The provided token was invalid",
             Error::ShardBootFailure => "Failed to (re-)boot a shard",
             Error::Shutdown => "The clients shards shutdown",
+            Error::__Nonexhaustive => unreachable!(),
         }
     }
 }

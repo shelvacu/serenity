@@ -1,11 +1,13 @@
-use model::prelude::*;
+#[cfg(feature = "http")]
+use crate::http::CacheHttp;
+use crate::model::prelude::*;
 
 #[cfg(all(feature = "builder", feature = "model"))]
-use builder::EditChannel;
-#[cfg(all(feature = "builder", feature = "model"))]
-use http;
+use crate::builder::EditChannel;
 #[cfg(all(feature = "model", feature = "utils"))]
-use utils::{self as serenity_utils, VecMap};
+use crate::utils as serenity_utils;
+#[cfg(feature = "http")]
+use crate::http::Http;
 
 /// A category of [`GuildChannel`]s.
 ///
@@ -35,14 +37,17 @@ pub struct ChannelCategory {
     ///
     /// [`GuildChannel`]: struct.GuildChannel.html
     pub permission_overwrites: Vec<PermissionOverwrite>,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
 impl ChannelCategory {
     /// Adds a permission overwrite to the category's channels.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_permission(&self, target: &PermissionOverwrite) -> Result<()> {
-        self.id.create_permission(target)
+    pub fn create_permission(&self, http: impl AsRef<Http>, target: &PermissionOverwrite) -> Result<()> {
+        self.id.create_permission(&http, target)
     }
 
     /// Deletes all permission overrides in the category from the channels.
@@ -50,24 +55,32 @@ impl ChannelCategory {
     /// **Note**: Requires the [Manage Channel] permission.
     ///
     /// [Manage Channel]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_CHANNELS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_permission(&self, permission_type: PermissionOverwriteType) -> Result<()> {
-        self.id.delete_permission(permission_type)
+    pub fn delete_permission(&self, http: impl AsRef<Http>, permission_type: PermissionOverwriteType) -> Result<()> {
+        self.id.delete_permission(&http, permission_type)
     }
 
-    /// Deletes this category.
+
+    /// Deletes this category if required permissions are met.
+    ///
+    /// **Note**: If the `cache`-feature is enabled permissions will be checked and upon
+    /// owning the required permissions the HTTP-request will be issued.
     #[inline]
-    pub fn delete(&self) -> Result<()> {
+    #[cfg(feature = "http")]
+    pub fn delete(&self, cache_http: impl CacheHttp) -> Result<()> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::MANAGE_CHANNELS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::MANAGE_CHANNELS;
 
-            if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !utils::user_has_perms(&cache, self.id, req)? {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.delete().map(|_| ())
+        self.id.delete(&cache_http.http()).map(|_| ())
     }
 
     /// Modifies the category's settings, such as its position or name.
@@ -79,27 +92,32 @@ impl ChannelCategory {
     /// Change a voice channels name and bitrate:
     ///
     /// ```rust,ignore
-    /// category.edit(|c| c.name("test").bitrate(86400));
+    /// category.edit(&context, |c| c.name("test").bitrate(86400));
     /// ```
-    #[cfg(all(feature = "builder", feature = "model", feature = "utils"))]
-    pub fn edit<F>(&mut self, f: F) -> Result<()>
-        where F: FnOnce(EditChannel) -> EditChannel {
+    #[cfg(all(feature = "builder", feature = "model", feature = "utils", feature = "client"))]
+    pub fn edit<F>(&mut self, cache_http: impl CacheHttp, f: F) -> Result<()>
+        where F: FnOnce(&mut EditChannel) -> &mut EditChannel {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::MANAGE_CHANNELS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::MANAGE_CHANNELS;
 
-            if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !utils::user_has_perms(&cache, self.id, req)? {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        let mut map = VecMap::new();
+        let mut map = HashMap::new();
         map.insert("name", Value::String(self.name.clone()));
         map.insert("position", Value::Number(Number::from(self.position)));
 
-        let map = serenity_utils::vecmap_to_json_map(f(EditChannel(map)).0);
 
-        http::edit_channel(self.id.0, &map).map(|channel| {
+        let mut edit_channel = EditChannel::default();
+        f(&mut edit_channel);
+        let map = serenity_utils::hashmap_to_json_map(edit_channel.0);
+
+        cache_http.http().edit_channel(self.id.0, &map).map(|channel| {
             let GuildChannel {
                 id,
                 category_id,
@@ -119,8 +137,8 @@ impl ChannelCategory {
                 name,
                 position,
                 kind,
+                _nonexhaustive: (),
             };
-            ()
         })
     }
 

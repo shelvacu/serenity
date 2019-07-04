@@ -1,33 +1,42 @@
+#[cfg(feature = "http")]
+use crate::http::CacheHttp;
 use chrono::{DateTime, FixedOffset};
-use model::prelude::*;
+use crate::model::prelude::*;
 
 #[cfg(all(feature = "cache", feature = "model"))]
-use CACHE;
+use crate::cache::CacheRwLock;
+#[cfg(feature = "cache")]
+use parking_lot::RwLock;
+#[cfg(feature = "cache")]
+use std::sync::Arc;
 #[cfg(feature = "model")]
-use builder::{
+use crate::builder::{
     CreateInvite,
     CreateMessage,
-    EditChannel,
     EditMessage,
     GetMessages
 };
 #[cfg(feature = "model")]
-use http::{self, AttachmentType};
+use crate::http::AttachmentType;
 #[cfg(all(feature = "cache", feature = "model"))]
-use internal::prelude::*;
+use crate::internal::prelude::*;
 #[cfg(feature = "model")]
 use std::fmt::{
     Display,
     Formatter,
     Result as FmtResult
 };
-#[cfg(feature = "model")]
-use std::mem;
 #[cfg(all(feature = "model", feature = "utils"))]
-use utils::{self as serenity_utils, VecMap};
+use crate::utils as serenity_utils;
+#[cfg(all(feature = "model", feature = "builder"))]
+use crate::builder::EditChannel;
+#[cfg(feature = "http")]
+use crate::http::Http;
 
-/// Represents a guild's text or voice channel. Some methods are available only
-/// for voice channels and some are only available for text channels.
+/// Represents a guild's text, news, or voice channel. Some methods are available
+/// only for voice channels and some are only available for text channels.
+/// News channels are a subset of text channels and lack slow mode hence
+/// `slow_mode_rate` will be `None`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GuildChannel {
     /// The unique Id of the channel.
@@ -87,6 +96,14 @@ pub struct GuildChannel {
     // default to `false`.
     #[serde(default)]
     pub nsfw: bool,
+    /// A rate limit that applies per user and excludes bots.
+    ///
+    /// **Note**: This is only available for text channels excluding news
+    /// channels.
+    #[serde(default, rename = "rate_limit_per_user")]
+    pub slow_mode_rate: Option<u64>,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
@@ -104,7 +121,8 @@ impl GuildChannel {
     ///
     /// [`ModelError::InvalidPermissions`]: ../error/enum.Error.html#variant.InvalidPermissions
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
-    pub fn broadcast_typing(&self) -> Result<()> { self.id.broadcast_typing() }
+    #[cfg(feature = "http")]
+    pub fn broadcast_typing(&self, http: impl AsRef<Http>) -> Result<()> { self.id.broadcast_typing(&http) }
 
     /// Creates an invite leading to the given channel.
     ///
@@ -115,21 +133,26 @@ impl GuildChannel {
     /// ```rust,ignore
     /// let invite = channel.create_invite(|i| i.max_uses(5));
     /// ```
-    #[cfg(feature = "utils")]
-    pub fn create_invite<F>(&self, f: F) -> Result<RichInvite>
-        where F: FnOnce(CreateInvite) -> CreateInvite {
+    #[cfg(all(feature = "utils", feature = "client"))]
+    pub fn create_invite<F>(&self, cache_http: impl CacheHttp, f: F) -> Result<RichInvite>
+        where F: FnOnce(&mut CreateInvite) -> &mut CreateInvite {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::CREATE_INVITE;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::CREATE_INVITE;
 
-            if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !utils::user_has_perms(&cache, self.id, req)? {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        let map = serenity_utils::vecmap_to_json_map(f(CreateInvite::default()).0);
+        let mut invite = CreateInvite::default();
+        f(&mut invite);
 
-        http::create_invite(self.id.0, &map)
+        let map = serenity_utils::hashmap_to_json_map(invite.0);
+
+        cache_http.http().create_invite(self.id.0, &map)
     }
 
     /// Creates a [permission overwrite][`PermissionOverwrite`] for either a
@@ -148,11 +171,16 @@ impl GuildChannel {
     /// permissions:
     ///
     /// ```rust,no_run
-    /// # use serenity::model::id::{ChannelId, UserId};
-    /// # use serenity::model::channel::Channel;
     /// # use std::error::Error;
     /// #
-    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// # #[cfg(feature = "cache")]
+    /// # fn main() -> Result<(), Box<Error>> {
+    /// # use serenity::{cache::{Cache, CacheRwLock}, http::Http, model::id::{ChannelId, UserId}};
+    /// # use parking_lot::RwLock;
+    /// # use std::sync::Arc;
+    /// #
+    /// #     let http = Arc::new(Http::default());
+    /// #     let cache: CacheRwLock = Arc::new(RwLock::new(Cache::default())).into();
     /// #     let (channel_id, user_id) = (ChannelId(0), UserId(0));
     /// #
     /// use serenity::model::channel::{
@@ -160,7 +188,6 @@ impl GuildChannel {
     ///     PermissionOverwriteType,
     /// };
     /// use serenity::model::{ModelError, Permissions};
-    ///
     /// let allow = Permissions::SEND_MESSAGES;
     /// let deny = Permissions::SEND_TTS_MESSAGES | Permissions::ATTACH_FILES;
     /// let overwrite = PermissionOverwrite {
@@ -168,19 +195,18 @@ impl GuildChannel {
     ///     deny: deny,
     ///     kind: PermissionOverwriteType::Member(user_id),
     /// };
+    /// # let cache = cache.read();
+    /// // assuming the cache has been unlocked
+    /// let channel = cache
+    ///     .guild_channel(channel_id)
+    ///     .ok_or(ModelError::ItemMissing)?;
     ///
-    /// let channel = channel_id.to_channel().expect("Could not request channel via REST.");
-    ///
-    /// if let Channel::Guild(channel) = channel {
-    ///     let channel = channel.read();
-    ///     channel.create_permission(&overwrite)?;
-    /// }
-    /// #     Ok(())
+    /// channel.read().create_permission(&http, &overwrite)?;
+    /// # Ok(())
     /// # }
     /// #
-    /// # fn main() {
-    /// #     try_main().unwrap();
-    /// # }
+    /// # #[cfg(not(feature = "cache"))]
+    /// # fn main() -> Result<(), Box<Error>> { Ok(()) }
     /// ```
     ///
     /// Creating a permission overwrite for a role by specifying the
@@ -189,11 +215,17 @@ impl GuildChannel {
     /// permissions:
     ///
     /// ```rust,no_run
-    /// # use serenity::model::id::{ChannelId, UserId};
     /// # use std::error::Error;
     /// #
-    /// # fn try_main() -> Result<(), Box<Error>> {
-    /// #     let (channel_id, user_id) = (ChannelId(0), UserId(0));
+    /// # #[cfg(feature = "cache")]
+    /// # fn main() -> Result<(), Box<Error>> {
+    /// # use serenity::{cache::{Cache, CacheRwLock}, http::Http, model::id::{ChannelId, UserId}};
+    /// # use parking_lot::RwLock;
+    /// # use std::sync::Arc;
+    /// #
+    /// #   let http = Arc::new(Http::default());
+    /// #   let cache: CacheRwLock = Arc::new(RwLock::new(Cache::default())).into();
+    /// #   let (channel_id, user_id) = (ChannelId(0), UserId(0));
     /// #
     /// use serenity::model::channel::{
     ///     PermissionOverwrite,
@@ -209,18 +241,17 @@ impl GuildChannel {
     ///     kind: PermissionOverwriteType::Member(user_id),
     /// };
     ///
-    /// let channel = channel_id.to_channel().expect("Could not request channel via REST.");
+    /// let cache = cache.read();
+    /// let channel = cache
+    ///     .guild_channel(channel_id)
+    ///     .ok_or(ModelError::ItemMissing)?;
     ///
-    /// if let Channel::Guild(channel) = channel {
-    ///     let channel = channel.read();
-    ///     channel.create_permission(&overwrite)?;
-    /// }
+    /// channel.read().create_permission(&http, &overwrite)?;
     /// #     Ok(())
     /// # }
     /// #
-    /// # fn main() {
-    /// #     try_main().unwrap();
-    /// # }
+    /// # #[cfg(not(feature = "cache"))]
+    /// # fn main() -> Result<(), Box<Error>> { Ok(()) }
     /// ```
     ///
     /// [`Channel`]: enum.Channel.html
@@ -235,23 +266,30 @@ impl GuildChannel {
     /// [Manage Webhooks]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_WEBHOOKS
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
     /// [Send TTS Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_TTS_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn create_permission(&self, target: &PermissionOverwrite) -> Result<()> {
-        self.id.create_permission(target)
+    pub fn create_permission(&self, http: impl AsRef<Http>, target: &PermissionOverwrite) -> Result<()> {
+        self.id.create_permission(&http, target)
     }
 
     /// Deletes this channel, returning the channel on a successful deletion.
-    pub fn delete(&self) -> Result<Channel> {
+    ///
+    /// **Note**: If the `cache`-feature is enabled permissions will be checked and upon
+    /// owning the required permissions the HTTP-request will be issued.
+    #[cfg(feature = "http")]
+    pub fn delete(&self, cache_http: impl CacheHttp) -> Result<Channel> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::MANAGE_CHANNELS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::MANAGE_CHANNELS;
 
-            if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !utils::user_has_perms(&cache, self.id, req)? {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.delete()
+        self.id.delete(&cache_http.http())
     }
 
     /// Deletes all messages by Ids from the given vector in the channel.
@@ -271,9 +309,10 @@ impl GuildChannel {
     /// [`Channel::delete_messages`]: enum.Channel.html#method.delete_messages
     /// [`ModelError::BulkDeleteAmount`]: ../error/enum.Error.html#variant.BulkDeleteAmount
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_messages<T: AsRef<MessageId>, It: IntoIterator<Item=T>>(&self, message_ids: It) -> Result<()> {
-        self.id.delete_messages(message_ids)
+    pub fn delete_messages<T: AsRef<MessageId>, It: IntoIterator<Item=T>>(&self, http: impl AsRef<Http>, message_ids: It) -> Result<()> {
+        self.id.delete_messages(&http, message_ids)
     }
 
     /// Deletes all permission overrides in the channel from a member
@@ -282,9 +321,10 @@ impl GuildChannel {
     /// **Note**: Requires the [Manage Channel] permission.
     ///
     /// [Manage Channel]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_CHANNELS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn delete_permission(&self, permission_type: PermissionOverwriteType) -> Result<()> {
-        self.id.delete_permission(permission_type)
+    pub fn delete_permission(&self, http: impl AsRef<Http>, permission_type: PermissionOverwriteType) -> Result<()> {
+        self.id.delete_permission(&http, permission_type)
     }
 
     /// Deletes the given [`Reaction`] from the channel.
@@ -294,14 +334,16 @@ impl GuildChannel {
     ///
     /// [`Reaction`]: struct.Reaction.html
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
     pub fn delete_reaction<M, R>(&self,
+                                 http: impl AsRef<Http>,
                                  message_id: M,
                                  user_id: Option<UserId>,
                                  reaction_type: R)
                                  -> Result<()>
         where M: Into<MessageId>, R: Into<ReactionType> {
-        self.id.delete_reaction(message_id, user_id, reaction_type)
+        self.id.delete_reaction(&http, message_id, user_id, reaction_type)
     }
 
     /// Modifies a channel's settings, such as its position or name.
@@ -313,29 +355,33 @@ impl GuildChannel {
     /// Change a voice channels name and bitrate:
     ///
     /// ```rust,ignore
-    /// channel.edit(|c| c.name("test").bitrate(86400));
+    /// channel.edit(&context, |c| c.name("test").bitrate(86400));
     /// ```
-    #[cfg(feature = "utils")]
-    pub fn edit<F>(&mut self, f: F) -> Result<()>
-        where F: FnOnce(EditChannel) -> EditChannel {
+    #[cfg(all(feature = "utils", feature = "client", feature = "builder"))]
+    pub fn edit<F>(&mut self, cache_http: impl CacheHttp, f: F) -> Result<()>
+        where F: FnOnce(&mut EditChannel) -> &mut EditChannel {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::MANAGE_CHANNELS;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::MANAGE_CHANNELS;
 
-            if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !utils::user_has_perms(&cache, self.id, req)? {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        let mut map = VecMap::new();
+        let mut map = HashMap::new();
         map.insert("name", Value::String(self.name.clone()));
         map.insert("position", Value::Number(Number::from(self.position)));
 
-        let edited = serenity_utils::vecmap_to_json_map(f(EditChannel(map)).0);
+        let mut edit_channel = EditChannel::default();
+        f(&mut edit_channel);
+        let edited = serenity_utils::hashmap_to_json_map(edit_channel.0);
 
-        match http::edit_channel(self.id.0, &edited) {
+        match cache_http.http().edit_channel(self.id.0, &edited) {
             Ok(channel) => {
-                mem::replace(self, channel);
+                std::mem::replace(self, channel);
 
                 Ok(())
             },
@@ -362,10 +408,11 @@ impl GuildChannel {
     /// [`EditMessage`]: ../../builder/struct.EditMessage.html
     /// [`Message`]: struct.Message.html
     /// [`the limit`]: ../../builder/struct.EditMessage.html#method.content
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn edit_message<F, M>(&self, message_id: M, f: F) -> Result<Message>
-        where F: FnOnce(EditMessage) -> EditMessage, M: Into<MessageId> {
-        self.id.edit_message(message_id, f)
+    pub fn edit_message<F, M>(&self, http: impl AsRef<Http>, message_id: M, f: F) -> Result<Message>
+        where F: FnOnce(&mut EditMessage) -> &mut EditMessage, M: Into<MessageId> {
+        self.id.edit_message(&http, message_id, f)
     }
 
     /// Attempts to find this channel's guild in the Cache.
@@ -373,14 +420,15 @@ impl GuildChannel {
     /// **Note**: Right now this performs a clone of the guild. This will be
     /// optimized in the future.
     #[cfg(feature = "cache")]
-    pub fn guild(&self) -> Option<Arc<RwLock<Guild>>> { CACHE.read().guild(self.guild_id) }
+    pub fn guild(&self, cache: impl AsRef<CacheRwLock>) -> Option<Arc<RwLock<Guild>>> { cache.as_ref().read().guild(self.guild_id) }
 
     /// Gets all of the channel's invites.
     ///
     /// Requires the [Manage Channels] permission.
     /// [Manage Channels]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_CHANNELS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn invites(&self) -> Result<Vec<RichInvite>> { self.id.invites() }
+    pub fn invites(&self, http: impl AsRef<Http>) -> Result<Vec<RichInvite>> { self.id.invites(&http) }
 
     /// Determines if the channel is NSFW.
     ///
@@ -399,23 +447,25 @@ impl GuildChannel {
     /// Requires the [Read Message History] permission.
     ///
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn message<M: Into<MessageId>>(&self, message_id: M) -> Result<Message> {
-        self.id.message(message_id)
+    pub fn message<M: Into<MessageId>>(&self, http: impl AsRef<Http>, message_id: M) -> Result<Message> {
+        self.id.message(&http, message_id)
     }
 
     /// Gets messages from the channel.
     ///
-    /// Refer to [`Channel::messages`] for more information.
+    /// Refer to the [`GetMessages`]-builder for more information on how to
+    /// use `builder`.
     ///
     /// Requires the [Read Message History] permission.
     ///
-    /// [`Channel::messages`]: enum.Channel.html#method.messages
+    /// [`GetMessages`]: ../../builder/struct.GetMessages.html
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
     #[inline]
-    pub fn messages<F>(&self, f: F) -> Result<Vec<Message>>
-        where F: FnOnce(GetMessages) -> GetMessages {
-        self.id.messages(f)
+    pub fn messages<F>(&self, http: impl AsRef<Http>, builder: F) -> Result<Vec<Message>>
+        where F: FnOnce(&mut GetMessages) -> &mut GetMessages {
+        self.id.messages(&http, builder)
     }
 
     /// Returns the name of the guild channel.
@@ -436,16 +486,14 @@ impl GuildChannel {
     /// use serenity::model::prelude::*;
     /// struct Handler;
     ///
-    /// use serenity::CACHE;
-    ///
     /// impl EventHandler for Handler {
-    ///     fn message(&self, _: Context, msg: Message) {
-    ///         let channel = match CACHE.read().guild_channel(msg.channel_id) {
+    ///     fn message(&self, context: Context, msg: Message) {
+    ///         let channel = match context.cache.read().guild_channel(msg.channel_id) {
     ///             Some(channel) => channel,
     ///             None => return,
     ///         };
     ///
-    ///         let permissions = channel.read().permissions_for(&msg.author).unwrap();
+    ///         let permissions = channel.read().permissions_for(&context.cache, &msg.author).unwrap();
     ///
     ///         println!("The user's permissions: {:?}", permissions);
     ///     }
@@ -463,18 +511,20 @@ impl GuildChannel {
     /// use serenity::prelude::*;
     /// use serenity::model::prelude::*;
     /// use serenity::model::channel::Channel;
-    /// use serenity::CACHE;
     /// use std::fs::File;
     ///
     /// struct Handler;
     ///
     /// impl EventHandler for Handler {
-    ///     fn message(&self, _: Context, msg: Message) {
-    ///         if let Ok(Channel::Guild(guild_channel)) = msg.channel_id.to_channel() {
+    ///     fn message(&self, context: Context, mut msg: Message) {
+    ///         let channel = match context.cache.read().guild_channel(msg.channel_id) {
+    ///             Some(channel) => channel,
+    ///             None => return,
+    ///         };
     ///
-    ///             let current_user_id = CACHE.read().user.id;
-    ///             let guild_channel = guild_channel.read();
-    ///             let permissions = guild_channel.permissions_for(current_user_id).unwrap();
+    ///         let current_user_id = context.cache.read().user.id;
+    ///         let permissions =
+    ///             channel.read().permissions_for(&context.cache, current_user_id).unwrap();
     ///
     ///             if !permissions.contains(Permissions::ATTACH_FILES | Permissions::SEND_MESSAGES) {
     ///                 return;
@@ -489,9 +539,11 @@ impl GuildChannel {
     ///                 },
     ///             };
     ///
-    ///             let _ = msg.channel_id.send_files(vec![(&file, "cat.png")], |m|
-    ///                 m.content("here's a cat"));
-    ///         }
+    ///         let _ = msg.channel_id.send_files(&context.http, vec![(&file, "cat.png")], |mut m| {
+    ///             m.content("here's a cat");
+    ///
+    ///             m
+    ///         });
     ///     }
     /// }
     ///
@@ -515,13 +567,13 @@ impl GuildChannel {
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
     #[cfg(feature = "cache")]
     #[inline]
-    pub fn permissions_for<U: Into<UserId>>(&self, user_id: U) -> Result<Permissions> {
-        self._permissions_for(user_id.into())
+    pub fn permissions_for<U: Into<UserId>>(&self, cache: impl AsRef<CacheRwLock>, user_id: U) -> Result<Permissions> {
+        self._permissions_for(&cache, user_id.into())
     }
 
     #[cfg(feature = "cache")]
-    fn _permissions_for(&self, user_id: UserId) -> Result<Permissions> {
-        self.guild()
+    fn _permissions_for(&self, cache: impl AsRef<CacheRwLock>, user_id: UserId) -> Result<Permissions> {
+        self.guild(&cache)
             .ok_or_else(|| Error::Model(ModelError::GuildNotFound))
             .map(|g| g.read().permissions_in(self.id, user_id))
     }
@@ -529,12 +581,14 @@ impl GuildChannel {
     /// Pins a [`Message`] to the channel.
     ///
     /// [`Message`]: struct.Message.html
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn pin<M: Into<MessageId>>(&self, message_id: M) -> Result<()> { self.id.pin(message_id) }
+    pub fn pin<M: Into<MessageId>>(&self, http: impl AsRef<Http>, message_id: M) -> Result<()> { self.id.pin(&http, message_id) }
 
     /// Gets all channel's pins.
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn pins(&self) -> Result<Vec<Message>> { self.id.pins() }
+    pub fn pins(&self, http: impl AsRef<Http>) -> Result<Vec<Message>> { self.id.pins(&http) }
 
     /// Gets the list of [`User`]s who have reacted to a [`Message`] with a
     /// certain [`Emoji`].
@@ -548,8 +602,10 @@ impl GuildChannel {
     /// [`Message`]: struct.Message.html
     /// [`User`]: ../user/struct.User.html
     /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
+    #[cfg(feature = "http")]
     pub fn reaction_users<M, R, U>(
         &self,
+        http: impl AsRef<Http>,
         message_id: M,
         reaction_type: R,
         limit: Option<u8>,
@@ -557,7 +613,7 @@ impl GuildChannel {
     ) -> Result<Vec<User>> where M: Into<MessageId>,
                                  R: Into<ReactionType>,
                                  U: Into<Option<UserId>> {
-        self.id.reaction_users(message_id, reaction_type, limit, after)
+        self.id.reaction_users(&http, message_id, reaction_type, limit, after)
     }
 
     /// Sends a message with just the given message content in the channel.
@@ -570,8 +626,9 @@ impl GuildChannel {
     ///
     /// [`ChannelId`]: ../id/struct.ChannelId.html
     /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn say(&self, content: &str) -> Result<Message> { self.id.say(content) }
+    pub fn say(&self, http: impl AsRef<Http>, content: impl std::fmt::Display) -> Result<Message> { self.id.say(&http, content) }
 
     /// Sends (a) file(s) along with optional message contents.
     ///
@@ -591,10 +648,12 @@ impl GuildChannel {
     /// [`ClientError::MessageTooLong`]: ../../client/enum.ClientError.html#variant.MessageTooLong
     /// [Attach Files]: ../permissions/struct.Permissions.html#associatedconstant.ATTACH_FILES
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn send_files<'a, F, T, It: IntoIterator<Item=T>>(&self, files: It, f: F) -> Result<Message>
-        where F: FnOnce(CreateMessage) -> CreateMessage, T: Into<AttachmentType<'a>> {
-        self.id.send_files(files, f)
+    pub fn send_files<'a, F, T, It>(&self, http: impl AsRef<Http>, files: It, f: F) -> Result<Message>
+        where for <'b> F: FnOnce(&'b mut CreateMessage<'a>) -> &'b mut CreateMessage<'a>,
+              T: Into<AttachmentType<'a>>, It: IntoIterator<Item=T> {
+        self.id.send_files(&http, files, f)
     }
 
     /// Sends a message to the channel with the given content.
@@ -616,17 +675,21 @@ impl GuildChannel {
     /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
     /// [`Message`]: struct.Message.html
     /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
-    pub fn send_message<F: FnOnce(CreateMessage) -> CreateMessage>(&self, f: F) -> Result<Message> {
+    #[cfg(feature = "client")]
+    pub fn send_message<'a, F>(&self, cache_http: impl CacheHttp, f: F) -> Result<Message>
+    where for <'b> F: FnOnce(&'b mut CreateMessage<'a>) -> &'b mut CreateMessage<'a> {
         #[cfg(feature = "cache")]
         {
-            let req = Permissions::SEND_MESSAGES;
+            if let Some(cache) = cache_http.cache() {
+                let req = Permissions::SEND_MESSAGES;
 
-            if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                if !utils::user_has_perms(&cache, self.id, req)? {
+                    return Err(Error::Model(ModelError::InvalidPermissions(req)));
+                }
             }
         }
 
-        self.id.send_message(f)
+        self.id.send_message(&cache_http.http(), f)
     }
 
     /// Unpins a [`Message`] in the channel given by its Id.
@@ -635,9 +698,10 @@ impl GuildChannel {
     ///
     /// [`Message`]: struct.Message.html
     /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn unpin<M: Into<MessageId>>(&self, message_id: M) -> Result<()> {
-        self.id.unpin(message_id)
+    pub fn unpin<M: Into<MessageId>>(&self, http: impl AsRef<Http>, message_id: M) -> Result<()> {
+        self.id.unpin(&http, message_id)
     }
 
     /// Retrieves the channel's webhooks.
@@ -645,12 +709,66 @@ impl GuildChannel {
     /// **Note**: Requires the [Manage Webhooks] permission.
     ///
     /// [Manage Webhooks]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_WEBHOOKS
+    #[cfg(feature = "http")]
     #[inline]
-    pub fn webhooks(&self) -> Result<Vec<Webhook>> { self.id.webhooks() }
+    pub fn webhooks(&self, http: impl AsRef<Http>) -> Result<Vec<Webhook>> { self.id.webhooks(&http) }
+
+    /// Retrieves [`Member`]s from the current channel.
+    ///
+    /// [`ChannelType::Voice`] returns [`Member`]s using the channel.
+    /// [`ChannelType::Text`] and [`ChannelType::News`] return [`Member`]s
+    /// that can read the channel.
+    ///
+    /// Other [`ChannelType`]s lack the concept of [`Member`]s and
+    /// will return: [`ModelError::InvalidChannelType`].
+    ///
+    /// [`Member`]: ../guild/struct.Member.html
+    /// [`ChannelType`]: enum.ChannelType.html
+    /// [`ChannelType::Voice`]: enum.ChannelType.html#variant.Voice
+    /// [`ChannelType::Text`]: enum.ChannelType.html#variant.Text
+    /// [`ChannelType::News`]: enum.ChannelType.html#variant.News
+    /// [`ModelError::InvalidChannelType`]: ../error/enum.Error.html#variant.InvalidChannelType
+    #[cfg(feature = "cache")]
+    #[inline]
+    pub fn members(&self, cache: impl AsRef<CacheRwLock>) -> Result<Vec<Member>> {
+        let cache = cache.as_ref();
+        let guild = cache.read().guild(self.guild_id).unwrap();
+
+        match self.kind {
+            ChannelType::Voice => Ok(guild
+                .read()
+                .voice_states
+                .values()
+                .filter_map(|v| {
+                    v.channel_id.and_then(
+                        |c| {
+                            if c == self.id {
+                                guild.read().members.get(&v.user_id).cloned()
+                            } else {
+                                None
+                            }
+                        },
+                    )
+                })
+                .collect()),
+            ChannelType::News | ChannelType::Text => Ok(guild
+                    .read()
+                    .members
+                    .iter()
+                    .filter_map(|e|
+                        if self.permissions_for(&cache, e.0).map(|p| p.contains(Permissions::READ_MESSAGES)).unwrap_or(false) {
+                            Some(e.1.clone())
+                        } else {
+                            None
+                        }
+                    ).collect()),
+            _ => Err(Error::from(ModelError::InvalidChannelType)),
+        }
+    }
 }
 
 #[cfg(feature = "model")]
 impl Display for GuildChannel {
     /// Formats the channel, creating a mention of it.
-    fn fmt(&self, f: &mut Formatter) -> FmtResult { Display::fmt(&self.id.mention(), f) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult { Display::fmt(&self.id.mention(), f) }
 }

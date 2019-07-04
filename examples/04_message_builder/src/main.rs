@@ -1,5 +1,3 @@
-extern crate serenity;
-
 use std::env;
 
 use serenity::{
@@ -11,9 +9,9 @@ use serenity::{
 struct Handler;
 
 impl EventHandler for Handler {
-    fn message(&self, _: Context, msg: Message) {
+    fn message(&self, context: Context, msg: Message) {
         if msg.content == "!ping" {
-            let channel = match msg.channel_id.to_channel() {
+            let channel = match msg.channel_id.to_channel(&context) {
                 Ok(channel) => channel,
                 Err(why) => {
                     println!("Error getting channel: {:?}", why);
@@ -34,7 +32,7 @@ impl EventHandler for Handler {
                 .push(" channel")
                 .build();
 
-            if let Err(why) = msg.channel_id.say(&response) {
+            if let Err(why) = msg.channel_id.say(&context.http, &response) {
                 println!("Error sending message: {:?}", why);
             }
         }

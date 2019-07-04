@@ -10,6 +10,8 @@ mod private_channel;
 mod reaction;
 mod channel_category;
 
+#[cfg(feature = "http")]
+use crate::http::CacheHttp;
 pub use self::attachment::*;
 pub use self::channel_id::*;
 pub use self::embed::*;
@@ -20,26 +22,27 @@ pub use self::private_channel::*;
 pub use self::reaction::*;
 pub use self::channel_category::*;
 
-use internal::RwLockExt;
-use model::prelude::*;
+use crate::{internal::RwLockExt, model::prelude::*};
 use serde::de::Error as DeError;
 use serde::ser::{SerializeStruct, Serialize, Serializer};
 use serde_json;
 use super::utils::deserialize_u64;
 
 #[cfg(feature = "model")]
-use builder::{CreateMessage, EditMessage, GetMessages};
-#[cfg(feature = "model")]
-use http::AttachmentType;
-#[cfg(feature = "model")]
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
-use std::str::FromStr;
+use crate::cache::FromStrAndCache;
 #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
-use model::misc::ChannelParseError;
+use crate::model::misc::ChannelParseError;
 #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
-use utils::parse_channel;
+use crate::utils::parse_channel;
+#[cfg(feature = "cache")]
+use crate::cache::CacheRwLock;
+#[cfg(feature = "cache")]
+use std::sync::Arc;
+#[cfg(feature = "cache")]
+use parking_lot::RwLock;
 
 /// A container for any channel.
 #[derive(Clone, Debug)]
@@ -61,6 +64,8 @@ pub enum Channel {
     ///
     /// [`GuildChannel`]: struct.GuildChannel.html
     Category(Arc<RwLock<ChannelCategory>>),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl Channel {
@@ -75,13 +80,14 @@ impl Channel {
     /// Basic usage:
     ///
     /// ```rust,no_run
-    /// # extern crate serenity;
-    /// #
-    /// # use self::serenity::model::id::ChannelId;
-    /// #
-    /// # #[cfg(feature = "model")]
+    /// # #[cfg(all(feature = "model", feature = "cache"))]
     /// # fn main() {
-    /// #     let channel = ChannelId(0).to_channel().unwrap();
+    /// # use serenity::{cache::{Cache, CacheRwLock}, model::id::ChannelId};
+    /// # use parking_lot::RwLock;
+    /// # use std::sync::Arc;
+    /// #
+    /// #     let cache: CacheRwLock = Arc::new(RwLock::new(Cache::default())).into();
+    /// #     let channel = ChannelId(0).to_channel_cached(&cache).unwrap();
     /// #
     /// match channel.group() {
     ///     Some(group_lock) => {
@@ -96,7 +102,7 @@ impl Channel {
     /// #
     /// # }
     /// #
-    /// # #[cfg(not(feature = "model"))]
+    /// # #[cfg(not(all(feature = "model", feature = "cache")))]
     /// fn main() {}
     /// ```
     pub fn group(self) -> Option<Arc<RwLock<Group>>> {
@@ -117,13 +123,14 @@ impl Channel {
     /// Basic usage:
     ///
     /// ```rust,no_run
-    /// # extern crate serenity;
-    /// #
-    /// # use self::serenity::model::id::ChannelId;
-    /// #
-    /// # #[cfg(feature = "model")]
+    /// # #[cfg(all(feature = "model", feature = "cache"))]
     /// # fn main() {
-    /// #     let channel = ChannelId(0).to_channel().unwrap();
+    /// # use serenity::{cache::{Cache, CacheRwLock}, model::id::ChannelId};
+    /// # use parking_lot::RwLock;
+    /// # use std::sync::Arc;
+    /// #
+    /// #   let cache: CacheRwLock = Arc::new(RwLock::new(Cache::default())).into();
+    /// #   let channel = ChannelId(0).to_channel_cached(&cache).unwrap();
     /// #
     /// match channel.guild() {
     ///     Some(guild_lock) => {
@@ -134,7 +141,7 @@ impl Channel {
     /// #
     /// # }
     /// #
-    /// # #[cfg(not(feature = "model"))]
+    /// # #[cfg(not(all(feature = "model", feature = "cache")))]
     /// fn main() {}
     /// ```
     pub fn guild(self) -> Option<Arc<RwLock<GuildChannel>>> {
@@ -155,13 +162,14 @@ impl Channel {
     /// Basic usage:
     ///
     /// ```rust,no_run
-    /// # extern crate serenity;
-    /// #
-    /// # use self::serenity::model::id::ChannelId;
-    /// #
-    /// # #[cfg(feature = "model")]
+    /// # #[cfg(all(feature = "model", feature = "cache"))]
     /// # fn main() {
-    /// #     let channel = ChannelId(0).to_channel().unwrap();
+    /// # use serenity::{cache::{Cache, CacheRwLock}, model::id::ChannelId};
+    /// # use parking_lot::RwLock;
+    /// # use std::sync::Arc;
+    /// #
+    /// #   let cache: CacheRwLock = Arc::new(RwLock::new(Cache::default())).into();
+    /// #   let channel = ChannelId(0).to_channel_cached(&cache).unwrap();
     /// #
     /// match channel.private() {
     ///     Some(private_lock) => {
@@ -175,7 +183,7 @@ impl Channel {
     /// #
     /// # }
     /// #
-    /// # #[cfg(not(feature = "model"))]
+    /// # #[cfg(not(all(feature = "model", feature = "cache")))]
     /// fn main() {}
     /// ```
     pub fn private(self) -> Option<Arc<RwLock<PrivateChannel>>> {
@@ -196,13 +204,14 @@ impl Channel {
     /// Basic usage:
     ///
     /// ```rust,no_run
-    /// # extern crate serenity;
-    /// #
-    /// # use self::serenity::model::id::ChannelId;
-    /// #
-    /// # #[cfg(feature = "model")]
+    /// # #[cfg(all(feature = "model", feature = "cache"))]
     /// # fn main() {
-    /// # let channel = ChannelId(0).to_channel().unwrap();
+    /// # use serenity::{cache::{Cache, CacheRwLock}, model::id::ChannelId};
+    /// # use parking_lot::RwLock;
+    /// # use std::sync::Arc;
+    /// #
+    /// #   let cache: CacheRwLock = Arc::new(RwLock::new(Cache::default())).into();
+    /// #   let channel = ChannelId(0).to_channel_cached(&cache).unwrap();
     /// #
     /// match channel.category() {
     ///     Some(category_lock) => {
@@ -213,7 +222,7 @@ impl Channel {
     /// #
     /// # }
     /// #
-    /// # #[cfg(not(feature = "model"))]
+    /// # #[cfg(not(all(feature = "model", feature = "cache")))]
     /// fn main() {}
     /// ```
     pub fn category(self) -> Option<Arc<RwLock<ChannelCategory>>> {
@@ -223,114 +232,34 @@ impl Channel {
         }
     }
 
-    /// React to a [`Message`] with a custom [`Emoji`] or unicode character.
-    ///
-    /// [`Message::react`] may be a more suited method of reacting in most
-    /// cases.
-    ///
-    /// Requires the [Add Reactions] permission, _if_ the current user is the
-    /// first user to perform a react with a certain emoji.
-    ///
-    /// [`Emoji`]: ../guild/struct.Emoji.html
-    /// [`Message`]: struct.Message.html
-    /// [`Message::react`]: struct.Message.html#method.react
-    /// [Add Reactions]: ../permissions/struct.Permissions.html#associatedconstant.ADD_REACTIONS
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn create_reaction<M, R>(&self, message_id: M, reaction_type: R) -> Result<()>
-        where M: Into<MessageId>, R: Into<ReactionType> {
-        self.id().create_reaction(message_id, reaction_type)
-    }
-
     /// Deletes the inner channel.
+    ///
+    /// **Note**: If the `cache`-feature is enabled permissions will be checked and upon
+    /// owning the required permissions the HTTP-request will be issued.
     ///
     /// **Note**: There is no real function as _deleting_ a [`Group`]. The
     /// closest functionality is leaving it.
     ///
     /// [`Group`]: struct.Group.html
-    #[cfg(feature = "model")]
-    pub fn delete(&self) -> Result<()> {
+    #[cfg(all(feature = "model", feature = "http"))]
+    pub fn delete(&self, cache_http: impl CacheHttp) -> Result<()> {
         match *self {
             Channel::Group(ref group) => {
-                let _ = group.read().leave()?;
+                let _ = group.read().leave(cache_http.http())?;
             },
             Channel::Guild(ref public_channel) => {
-                let _ = public_channel.read().delete()?;
+                let _ = public_channel.read().delete(cache_http)?;
             },
             Channel::Private(ref private_channel) => {
-                let _ = private_channel.read().delete()?;
+                let _ = private_channel.read().delete(cache_http.http())?;
             },
             Channel::Category(ref category) => {
-                category.read().delete()?;
+                category.read().delete(cache_http)?;
             },
+            Channel::__Nonexhaustive => unreachable!(),
         }
 
         Ok(())
-    }
-
-    /// Deletes a [`Message`] given its Id.
-    ///
-    /// Refer to [`Message::delete`] for more information.
-    ///
-    /// Requires the [Manage Messages] permission, if the current user is not
-    /// the author of the message.
-    ///
-    /// [`Message`]: struct.Message.html
-    /// [`Message::delete`]: struct.Message.html#method.delete
-    /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn delete_message<M: Into<MessageId>>(&self, message_id: M) -> Result<()> {
-        self.id().delete_message(message_id)
-    }
-
-    /// Deletes the given [`Reaction`] from the channel.
-    ///
-    /// **Note**: Requires the [Manage Messages] permission, _if_ the current
-    /// user did not perform the reaction.
-    ///
-    /// [`Reaction`]: struct.Reaction.html
-    /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn delete_reaction<M, R>(&self,
-                                 message_id: M,
-                                 user_id: Option<UserId>,
-                                 reaction_type: R)
-                                 -> Result<()>
-        where M: Into<MessageId>, R: Into<ReactionType> {
-        self.id()
-            .delete_reaction(message_id, user_id, reaction_type)
-    }
-
-    /// Edits a [`Message`] in the channel given its Id.
-    ///
-    /// Message editing preserves all unchanged message data.
-    ///
-    /// Refer to the documentation for [`EditMessage`] for more information
-    /// regarding message restrictions and requirements.
-    ///
-    /// **Note**: Requires that the current user be the author of the message.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`ModelError::MessageTooLong`] if the content of the message
-    /// is over the [`the limit`], containing the number of unicode code points
-    /// over the limit.
-    ///
-    /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
-    /// [`EditMessage`]: ../../builder/struct.EditMessage.html
-    /// [`Message`]: struct.Message.html
-    /// [`the limit`]: ../../builder/struct.EditMessage.html#method.content
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn edit_message<F, M>(&self, message_id: M, f: F) -> Result<Message>
-        where F: FnOnce(EditMessage) -> EditMessage, M: Into<MessageId> {
-        self.id().edit_message(message_id, f)
     }
 
     /// Determines if the channel is NSFW.
@@ -341,73 +270,8 @@ impl Channel {
             Channel::Guild(ref channel) => channel.with(|c| c.is_nsfw()),
             Channel::Category(ref category) => category.with(|c| c.is_nsfw()),
             Channel::Group(_) | Channel::Private(_) => false,
+            Channel::__Nonexhaustive => unreachable!(),
         }
-    }
-
-    /// Gets a message from the channel.
-    ///
-    /// Requires the [Read Message History] permission.
-    ///
-    /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn message<M: Into<MessageId>>(&self, message_id: M) -> Result<Message> {
-        self.id().message(message_id)
-    }
-
-    /// Gets messages from the channel.
-    ///
-    /// Requires the [Read Message History] permission.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use serenity::model::MessageId;
-    ///
-    /// let id = MessageId(81392407232380928);
-    ///
-    /// // Maximum is 100.
-    /// let _messages = channel.messages(|g| g.after(id).limit(100));
-    /// ```
-    ///
-    /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn messages<F>(&self, f: F) -> Result<Vec<Message>>
-        where F: FnOnce(GetMessages) -> GetMessages {
-        self.id().messages(f)
-    }
-
-    /// Gets the list of [`User`]s who have reacted to a [`Message`] with a
-    /// certain [`Emoji`].
-    ///
-    /// The default `limit` is `50` - specify otherwise to receive a different
-    /// maximum number of users. The maximum that may be retrieve at a time is
-    /// `100`, if a greater number is provided then it is automatically reduced.
-    ///
-    /// The optional `after` attribute is to retrieve the users after a certain
-    /// user. This is useful for pagination.
-    ///
-    /// **Note**: Requires the [Read Message History] permission.
-    ///
-    /// [`Emoji`]: ../guild/struct.Emoji.html
-    /// [`Message`]: struct.Message.html
-    /// [`User`]: ../user/struct.User.html
-    /// [Read Message History]: ../permissions/struct.Permissions.html#associatedconstant.READ_MESSAGE_HISTORY
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn reaction_users<M, R, U>(&self,
-        message_id: M,
-        reaction_type: R,
-        limit: Option<u8>,
-        after: U,
-    ) -> Result<Vec<User>> where M: Into<MessageId>,
-                                 R: Into<ReactionType>,
-                                 U: Into<Option<UserId>> {
-        self.id().reaction_users(message_id, reaction_type, limit, after)
     }
 
     /// Retrieves the Id of the inner [`Group`], [`GuildChannel`], or
@@ -422,6 +286,7 @@ impl Channel {
             Channel::Guild(ref ch) => ch.with(|c| c.id),
             Channel::Private(ref ch) => ch.with(|c| c.id),
             Channel::Category(ref category) => category.with(|c| c.id),
+            Channel::__Nonexhaustive => unreachable!(),
         }
     }
 
@@ -438,87 +303,6 @@ impl Channel {
             Channel::Category(ref catagory) => Some(catagory.with(|c| c.position)),
             _ => None
         }
-    }
-
-    /// Sends a message with just the given message content in the channel.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`ModelError::MessageTooLong`] if the content of the message
-    /// is over the above limit, containing the number of unicode code points
-    /// over the limit.
-    ///
-    /// [`ChannelId`]: ../id/struct.ChannelId.html
-    /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn say(&self, content: &str) -> Result<Message> { self.id().say(content) }
-
-    /// Sends (a) file(s) along with optional message contents.
-    ///
-    /// Refer to [`ChannelId::send_files`] for examples and more information.
-    ///
-    /// The [Attach Files] and [Send Messages] permissions are required.
-    ///
-    /// **Note**: Message contents must be under 2000 unicode code points.
-    ///
-    /// # Errors
-    ///
-    /// If the content of the message is over the above limit, then a
-    /// [`ClientError::MessageTooLong`] will be returned, containing the number
-    /// of unicode code points over the limit.
-    ///
-    /// [`ChannelId::send_files`]: ../id/struct.ChannelId.html#method.send_files
-    /// [`ClientError::MessageTooLong`]: ../../client/enum.ClientError.html#variant.MessageTooLong
-    /// [Attach Files]: ../permissions/struct.Permissions.html#associatedconstant.ATTACH_FILES
-    /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn send_files<'a, F, T, It: IntoIterator<Item=T>>(&self, files: It, f: F) -> Result<Message>
-        where F: FnOnce(CreateMessage) -> CreateMessage, T: Into<AttachmentType<'a>> {
-        self.id().send_files(files, f)
-    }
-
-    /// Sends a message to the channel.
-    ///
-    /// Refer to the documentation for [`CreateMessage`] for more information
-    /// regarding message restrictions and requirements.
-    ///
-    /// The [Send Messages] permission is required.
-    ///
-    /// **Note**: Message contents must be under 2000 unicode code points.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`ModelError::MessageTooLong`] if the content of the message
-    /// is over the above limit, containing the number of unicode code points
-    /// over the limit.
-    ///
-    /// [`Channel`]: enum.Channel.html
-    /// [`ModelError::MessageTooLong`]: ../error/enum.Error.html#variant.MessageTooLong
-    /// [`CreateMessage`]: ../../builder/struct.CreateMessage.html
-    /// [Send Messages]: ../permissions/struct.Permissions.html#associatedconstant.SEND_MESSAGES
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn send_message<F>(&self, f: F) -> Result<Message>
-        where F: FnOnce(CreateMessage) -> CreateMessage {
-        self.id().send_message(f)
-    }
-
-    /// Unpins a [`Message`] in the channel given by its Id.
-    ///
-    /// Requires the [Manage Messages] permission.
-    ///
-    /// [`Message`]: struct.Message.html
-    /// [Manage Messages]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_MESSAGES
-    #[cfg(feature = "model")]
-    #[deprecated(since = "0.4.2", note = "Use the inner channel's method")]
-    #[inline]
-    pub fn unpin<M: Into<MessageId>>(&self, message_id: M) -> Result<()> {
-        self.id().unpin(message_id)
     }
 }
 
@@ -565,6 +349,7 @@ impl Serialize for Channel {
             Channel::Private(ref c) => {
                 PrivateChannel::serialize(&*c.read(), serializer)
             },
+            Channel::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -584,7 +369,7 @@ impl Display for Channel {
     /// [`Group::name`]: struct.Group.html#method.name
     /// [`GuildChannel`]: struct.GuildChannel.html
     /// [`PrivateChannel`]: struct.PrivateChannel.html
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match *self {
             Channel::Group(ref group) => Display::fmt(&group.read().name(), f),
             Channel::Guild(ref ch) => Display::fmt(&ch.read().id.mention(), f),
@@ -595,6 +380,7 @@ impl Display for Channel {
                 Display::fmt(&recipient.name, f)
             },
             Channel::Category(ref category) => Display::fmt(&category.read().name, f),
+            Channel::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -622,6 +408,12 @@ pub enum ChannelType {
     ///
     /// [`ChannelCategory`]: struct.ChannelCategory.html
     Category = 4,
+    /// An indicator that the channel is a [`NewsChannel`].
+    ///
+    /// [`NewsChannel`]: struct.NewsChannel.html
+    News = 5,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 enum_number!(
@@ -631,6 +423,7 @@ enum_number!(
         Voice,
         Group,
         Category,
+        News,
     }
 );
 
@@ -642,16 +435,20 @@ impl ChannelType {
             ChannelType::Text => "text",
             ChannelType::Voice => "voice",
             ChannelType::Category => "category",
+            ChannelType::News => "news",
+            ChannelType::__Nonexhaustive => unreachable!(),
         }
     }
 
-    pub fn num(&self) -> u64 {
-        match *self {
+    pub fn num(self) -> u64 {
+        match self {
             ChannelType::Text => 0,
             ChannelType::Private => 1,
             ChannelType::Voice => 2,
             ChannelType::Group => 3,
             ChannelType::Category => 4,
+            ChannelType::News => 5,
+            ChannelType::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -660,7 +457,7 @@ impl ChannelType {
 struct PermissionOverwriteData {
     allow: Permissions,
     deny: Permissions,
-    #[serde(deserialize_with = "deserialize_u64")] id: u64,
+    #[serde(serialize_with = "serialize_u64", deserialize_with = "deserialize_u64")] id: u64,
     #[serde(rename = "type")] kind: String,
 }
 
@@ -697,6 +494,7 @@ impl Serialize for PermissionOverwrite {
         let (id, kind) = match self.kind {
             PermissionOverwriteType::Member(id) => (id.0, "member"),
             PermissionOverwriteType::Role(id) => (id.0, "role"),
+            PermissionOverwriteType::__Nonexhaustive => unreachable!(),
         };
 
         let mut state = serializer.serialize_struct("PermissionOverwrite", 4)?;
@@ -720,13 +518,15 @@ pub enum PermissionOverwriteType {
     Member(UserId),
     /// A role which is having its permission overwrites edited.
     Role(RoleId),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 #[cfg(test)]
 mod test {
     #[cfg(all(feature = "model", feature = "utils"))]
     mod model_utils {
-        use model::prelude::*;
+        use crate::model::prelude::*;
         use parking_lot::RwLock;
         use std::collections::HashMap;
         use std::sync::Arc;
@@ -740,6 +540,7 @@ mod test {
                 name: None,
                 owner_id: UserId(2),
                 recipients: HashMap::new(),
+                _nonexhaustive: (),
             }
         }
 
@@ -758,6 +559,8 @@ mod test {
                 topic: None,
                 user_limit: None,
                 nsfw: false,
+                slow_mode_rate: Some(0),
+                _nonexhaustive: (),
             }
         }
 
@@ -773,7 +576,9 @@ mod test {
                     bot: false,
                     discriminator: 1,
                     name: "ab".to_string(),
+                    _nonexhaustive: (),
                 })),
+                _nonexhaustive: (),
             }
         }
 
@@ -813,12 +618,12 @@ mod test {
 }
 
 #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
-impl FromStr for Channel {
+impl FromStrAndCache for Channel {
     type Err = ChannelParseError;
 
-    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
+    fn from_str(cache: impl AsRef<CacheRwLock>, s: &str) -> StdResult<Self, Self::Err> {
         match parse_channel(s) {
-            Some(x) => match ChannelId(x).to_channel_cached() {
+            Some(x) => match ChannelId(x).to_channel_cached(&cache) {
                 Some(channel) => Ok(channel),
                 _ => Err(ChannelParseError::NotPresentInCache),
             },

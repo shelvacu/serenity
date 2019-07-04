@@ -53,8 +53,8 @@
 //!     .cmd("ping", ping));
 //!
 //!
-//! command!(ping(_context, message) {
-//!     message.channel_id.say("Pong!")?;
+//! command!(ping(context, message) {
+//!     message.channel_id.say(&context.http, "Pong!")?;
 //! });
 //! ```
 //!
@@ -66,41 +66,40 @@ pub mod standard;
 #[cfg(feature = "standard_framework")]
 pub use self::standard::StandardFramework;
 
-use client::Context;
-use model::channel::Message;
+use crate::client::Context;
+use crate::model::channel::Message;
 use threadpool::ThreadPool;
+use std::sync::Arc;
 
-#[cfg(feature = "standard_framework")]
-use model::id::UserId;
-
-/// This trait allows for serenity to either use its builtin framework, or yours.
+/// A trait for defining your own framework for serenity to use.
+///
+/// Should you implement this trait, or define a `message` handler, depends on you.
+/// However, using this will benefit you by abstracting the `EventHandler` away,
+/// and providing a reference to serenity's threadpool,
+/// so that you may run your commands in separate threads.
 pub trait Framework {
-    fn dispatch(&mut self, Context, Message, &ThreadPool);
-
-    #[doc(hidden)]
-    #[cfg(feature = "standard_framework")]
-    fn update_current_user(&mut self, UserId) {}
+    fn dispatch(&mut self, _: Context, _: Message, _: &ThreadPool);
 }
 
 impl<F: Framework + ?Sized> Framework for Box<F> {
+     #[inline]
     fn dispatch(&mut self, ctx: Context, msg: Message, threadpool: &ThreadPool) {
         (**self).dispatch(ctx, msg, threadpool);
     }
+}
 
-    #[cfg(feature = "standard_framework")]
-    fn update_current_user(&mut self, id: UserId) {
-        (**self).update_current_user(id);
+impl<T: Framework + ?Sized> Framework for Arc<T> {
+    #[inline]
+    fn dispatch(&mut self, ctx: Context, msg: Message, threadpool: &threadpool::ThreadPool) {
+        if let Some(s) = Arc::get_mut(self) {
+            (*s).dispatch(ctx, msg, threadpool)
+        }
     }
 }
 
 impl<'a, F: Framework + ?Sized> Framework for &'a mut F {
+     #[inline]
     fn dispatch(&mut self, ctx: Context, msg: Message, threadpool: &ThreadPool) {
         (**self).dispatch(ctx, msg, threadpool);
     }
-
-    #[cfg(feature = "standard_framework")]
-    fn update_current_user(&mut self, id: UserId) {
-        (**self).update_current_user(id);
-    }
 }
-

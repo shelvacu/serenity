@@ -13,7 +13,7 @@ pub const LARGE_THRESHOLD: u8 = 250;
 pub const MESSAGE_CODE_LIMIT: u16 = 2000;
 /// The [UserAgent] sent along with every request.
 ///
-/// [UserAgent]: ../../hyper/header/struct.UserAgent.html
+/// [UserAgent]: ../../reqwest/header/constant.USER_AGENT.html
 pub const USER_AGENT: &str = concat!(
     "DiscordBot (https://github.com/serenity-rs/serenity, ",
     env!("CARGO_PKG_VERSION"),
@@ -90,6 +90,8 @@ pub enum OpCode {
     Hello = 10,
     /// Sent immediately following a client heartbeat that was received.
     HeartbeatAck = 11,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 enum_number!(
@@ -110,8 +112,8 @@ enum_number!(
 );
 
 impl OpCode {
-    pub fn num(&self) -> u64 {
-        match *self {
+    pub fn num(self) -> u64 {
+        match self {
             OpCode::Event => 0,
             OpCode::Heartbeat => 1,
             OpCode::Identify => 2,
@@ -124,10 +126,10 @@ impl OpCode {
             OpCode::InvalidSession => 9,
             OpCode::Hello => 10,
             OpCode::HeartbeatAck => 11,
+            OpCode::__Nonexhaustive => unreachable!(),
         }
     }
 }
-
 
 /// Enum to map voice opcodes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -137,39 +139,62 @@ pub enum VoiceOpCode {
     /// Used to select the voice protocol.
     SelectProtocol = 1,
     /// Used to complete the websocket handshake.
-    Hello = 2,
+    Ready = 2,
     /// Used to keep the websocket connection alive.
-    KeepAlive = 3,
+    Heartbeat = 3,
     /// Used to describe the session.
     SessionDescription = 4,
     /// Used to indicate which users are speaking.
     Speaking = 5,
-    /// Used to heartbeat.
-    Heartbeat = 8,
+    /// Heartbeat ACK, received by the client to show the server's receipt of a heartbeat.
+    HeartbeatAck = 6,
+    /// Sent after a disconnect to attempt to resume a session.
+    Resume = 7,
+    /// Used to determine how often the client must send a heartbeat.
+    Hello = 8,
+    /// Sent by the server if a session coulkd successfully be resumed.
+    Resumed = 9,
+    /// Message indicating that another user has connected to the voice channel.
+    ClientConnect = 12,
+    /// Message indicating that another user has disconnected from the voice channel.
+    ClientDisconnect = 13,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 enum_number!(
     VoiceOpCode {
         Identify,
         SelectProtocol,
-        Hello,
-        KeepAlive,
+        Ready,
+        Heartbeat,
         SessionDescription,
         Speaking,
-        Heartbeat,
+        HeartbeatAck,
+        Resume,
+        Hello,
+        Resumed,
+        ClientConnect,
+        ClientDisconnect,
     }
 );
 
 impl VoiceOpCode {
-    pub fn num(&self) -> u64 {
-        match *self {
+    pub fn num(self) -> u64 {
+        match self {
             VoiceOpCode::Identify => 0,
             VoiceOpCode::SelectProtocol => 1,
-            VoiceOpCode::Hello => 2,
-            VoiceOpCode::KeepAlive => 3,
+            VoiceOpCode::Ready => 2,
+            VoiceOpCode::Heartbeat => 3,
             VoiceOpCode::SessionDescription => 4,
             VoiceOpCode::Speaking => 5,
-            VoiceOpCode::Heartbeat => 8,
+            VoiceOpCode::HeartbeatAck => 6,
+            VoiceOpCode::Resume => 7,
+            VoiceOpCode::Hello => 8,
+            VoiceOpCode::Resumed => 9,
+            VoiceOpCode::ClientConnect => 12,
+            VoiceOpCode::ClientDisconnect => 13,
+            VoiceOpCode::__Nonexhaustive => unreachable!(),
         }
     }
 }

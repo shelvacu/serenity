@@ -7,7 +7,9 @@ use std::fmt::{
 use super::super::id::{EmojiId, RoleId};
 
 #[cfg(all(feature = "cache", feature = "model"))]
-use internal::prelude::*;
+use serde_json::json;
+#[cfg(all(feature = "cache", feature = "model"))]
+use crate::internal::prelude::*;
 #[cfg(all(feature = "cache", feature = "model"))]
 use std::mem;
 #[cfg(all(feature = "cache", feature = "model"))]
@@ -15,7 +17,9 @@ use super::super::ModelError;
 #[cfg(all(feature = "cache", feature = "model"))]
 use super::super::id::GuildId;
 #[cfg(all(feature = "cache", feature = "model"))]
-use {CACHE, http};
+use crate::cache::CacheRwLock;
+#[cfg(all(feature = "cache", feature = "http"))]
+use crate::http::raw::Http;
 
 /// Represents a custom guild emoji, which can either be created using the API,
 /// or via an integration. Emojis created using the API only work within the
@@ -42,6 +46,8 @@ pub struct Emoji {
     ///
     /// [`Role`]: struct.Role.html
     pub roles: Vec<RoleId>,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(feature = "model")]
@@ -52,7 +58,7 @@ impl Emoji {
     ///
     /// **Note**: Only user accounts may use this method.
     ///
-    /// [Manage Emojis]: 
+    /// [Manage Emojis]:
     /// ../permissions/struct.Permissions.html#associatedconstant.MANAGE_EMOJIS
     ///
     /// # Examples
@@ -60,28 +66,41 @@ impl Emoji {
     /// Delete a given emoji:
     ///
     /// ```rust,no_run
-    /// # use serenity::model::guild::Emoji;
-    /// # use serenity::model::id::EmojiId;
+    /// # extern crate serde_json;
+    /// # extern crate serenity;
     /// #
-    /// # let mut emoji = Emoji {
-    /// #     animated: false,
-    /// #     id: EmojiId(7),
-    /// #     name: String::from("blobface"),
-    /// #     managed: false,
-    /// #     require_colons: false,
-    /// #     roles: vec![],
-    /// # };
+    /// # use serde_json::json;
+    /// # use serenity::framework::standard::{CommandResult, macros::command};
+    /// # use serenity::client::Context;
+    /// # use serenity::model::prelude::{EmojiId, Emoji, Role};
+    /// #
+    /// # #[command]
+    /// # fn example(ctx: &mut Context) -> CommandResult {
+    /// #     let mut emoji = serde_json::from_value::<Emoji>(json!({
+    /// #         "animated": false,
+    /// #         "id": EmojiId(7),
+    /// #         "name": "blobface",
+    /// #         "managed": false,
+    /// #         "require_colons": false,
+    /// #         "roles": Vec::<Role>::new(),
+    /// #     })).unwrap();
     /// #
     /// // assuming emoji has been set already
-    /// match emoji.delete() {
+    /// match emoji.delete(&ctx) {
     ///     Ok(()) => println!("Emoji deleted."),
     ///     Err(_) => println!("Could not delete emoji.")
     /// }
+    /// #    Ok(())
+    /// # }
+    /// #
+    /// # fn main() { }
     /// ```
-    #[cfg(feature = "cache")]
-    pub fn delete(&self) -> Result<()> {
-        match self.find_guild_id() {
-            Some(guild_id) => http::delete_emoji(guild_id.0, self.id.0),
+    #[cfg(all(feature = "cache", feature = "http"))]
+    pub fn delete<T>(&self, cache_and_http: T) -> Result<()>
+    where T: AsRef<CacheRwLock> + AsRef<Http> {
+        match self.find_guild_id(&cache_and_http) {
+            Some(guild_id) => AsRef::<Http>::as_ref(&cache_and_http)
+                .delete_emoji(guild_id.0, self.id.0),
             None => Err(Error::Model(ModelError::ItemMissing)),
         }
     }
@@ -93,37 +112,17 @@ impl Emoji {
     /// **Note**: Only user accounts may use this method.
     ///
     /// [Manage Emojis]: ../permissions/struct.Permissions.html#associatedconstant.MANAGE_EMOJIS
-    ///
-    /// # Examples
-    ///
-    /// Change the name of an emoji:
-    ///
-    /// ```rust,no_run
-    /// # use serenity::model::guild::Emoji;
-    /// # use serenity::model::id::EmojiId;
-    /// #
-    /// # let mut emoji = Emoji {
-    /// #     animated: false,
-    /// #     id: EmojiId(7),
-    /// #     name: String::from("blobface"),
-    /// #     managed: false,
-    /// #     require_colons: false,
-    /// #     roles: vec![],
-    /// # };
-    /// #
-    /// // assuming emoji has been set already
-    /// let _ = emoji.edit("blobuwu");
-    /// assert_eq!(emoji.name, "blobuwu");
-    /// ```
-    #[cfg(feature = "cache")]
-    pub fn edit(&mut self, name: &str) -> Result<()> {
-        match self.find_guild_id() {
+    #[cfg(all(feature = "cache", feature = "http"))]
+    pub fn edit<T>(&mut self, cache_and_http: T, name: &str) -> Result<()>
+    where T: AsRef<CacheRwLock> + AsRef<Http> {
+        match self.find_guild_id(&cache_and_http) {
             Some(guild_id) => {
                 let map = json!({
                     "name": name,
                 });
 
-                match http::edit_emoji(guild_id.0, self.id.0, &map) {
+                match AsRef::<Http>::as_ref(&cache_and_http)
+                    .edit_emoji(guild_id.0, self.id.0, &map) {
                     Ok(emoji) => {
                         mem::replace(self, emoji);
 
@@ -145,26 +144,35 @@ impl Emoji {
     /// Print the guild id that owns this emoji:
     ///
     /// ```rust,no_run
-    /// # use serenity::model::guild::Emoji;
-    /// # use serenity::model::id::EmojiId;
+    /// # extern crate serde_json;
+    /// # extern crate serenity;
     /// #
-    /// # let mut emoji = Emoji {
-    /// #     animated: false,
-    /// #     id: EmojiId(7),
-    /// #     name: String::from("blobface"),
-    /// #     managed: false,
-    /// #     require_colons: false,
-    /// #     roles: vec![],
-    /// # };
+    /// # use serde_json::json;
+    /// # use serenity::{cache::{Cache, CacheRwLock}, model::{guild::{Emoji, Role}, id::EmojiId}};
+    /// # use parking_lot::RwLock;
+    /// # use std::sync::Arc;
+    /// #
+    /// # fn main() {
+    /// # let cache: CacheRwLock = Arc::new(RwLock::new(Cache::default())).into();
+    /// #
+    /// # let mut emoji = serde_json::from_value::<Emoji>(json!({
+    /// #     "animated": false,
+    /// #     "id": EmojiId(7),
+    /// #     "name": "blobface",
+    /// #     "managed": false,
+    /// #     "require_colons": false,
+    /// #     "roles": Vec::<Role>::new(),
+    /// # })).unwrap();
     /// #
     /// // assuming emoji has been set already
-    /// if let Some(guild_id) = emoji.find_guild_id() {
+    /// if let Some(guild_id) = emoji.find_guild_id(&cache) {
     ///     println!("{} is owned by {}", emoji.name, guild_id);
     /// }
+    /// # }
     /// ```
     #[cfg(feature = "cache")]
-    pub fn find_guild_id(&self) -> Option<GuildId> {
-        for guild in CACHE.read().guilds.values() {
+    pub fn find_guild_id(&self, cache: impl AsRef<CacheRwLock>) -> Option<GuildId> {
+        for guild in cache.as_ref().read().guilds.values() {
             let guild = guild.read();
 
             if guild.emojis.contains_key(&self.id) {
@@ -182,20 +190,25 @@ impl Emoji {
     /// Print the direct link to the given emoji:
     ///
     /// ```rust,no_run
-    /// # use serenity::model::guild::Emoji;
-    /// # use serenity::model::id::EmojiId;
+    /// # extern crate serde_json;
+    /// # extern crate serenity;
     /// #
-    /// # let mut emoji = Emoji {
-    /// #     animated: false,
-    /// #     id: EmojiId(7),
-    /// #     name: String::from("blobface"),
-    /// #     managed: false,
-    /// #     require_colons: false,
-    /// #     roles: vec![],
-    /// # };
+    /// # use serde_json::json;
+    /// # use serenity::model::{guild::{Emoji, Role}, id::EmojiId};
+    /// #
+    /// # fn main() {
+    /// # let mut emoji = serde_json::from_value::<Emoji>(json!({
+    /// #     "animated": false,
+    /// #     "id": EmojiId(7),
+    /// #     "name": "blobface",
+    /// #     "managed": false,
+    /// #     "require_colons": false,
+    /// #     "roles": Vec::<Role>::new(),
+    /// # })).unwrap();
     /// #
     /// // assuming emoji has been set already
     /// println!("Direct link to emoji image: {}", emoji.url());
+    /// # }
     /// ```
     #[inline]
     pub fn url(&self) -> String {
@@ -209,7 +222,7 @@ impl Display for Emoji {
     /// render the emoji.
     ///
     /// This is in the format of: `<:NAME:EMOJI_ID>`.
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.write_str("<:")?;
         f.write_str(&self.name)?;
         FmtWrite::write_char(f, ':')?;

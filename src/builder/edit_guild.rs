@@ -1,6 +1,6 @@
-use internal::prelude::*;
-use model::prelude::*;
-use utils::VecMap;
+use crate::internal::prelude::*;
+use crate::model::prelude::*;
+use std::collections::HashMap;
 
 /// A builder to optionally edit certain fields of a [`Guild`]. This is meant
 /// for usage with [`Guild::edit`].
@@ -12,7 +12,7 @@ use utils::VecMap;
 /// [`Guild`]: ../model/guild/struct.Guild.html
 /// [Manage Guild]: ../model/permissions/struct.Permissions.html#associatedconstant.MANAGE_GUILD
 #[derive(Clone, Debug, Default)]
-pub struct EditGuild(pub VecMap<&'static str, Value>);
+pub struct EditGuild(pub HashMap<&'static str, Value>);
 
 impl EditGuild {
     /// Set the "AFK voice channel" that users are to move to if they have been
@@ -24,11 +24,12 @@ impl EditGuild {
     ///
     /// [`afk_timeout`]: #method.afk_timeout
     #[inline]
-    pub fn afk_channel<C: Into<ChannelId>>(self, channel: Option<C>) -> Self {
-        self._afk_channel(channel.map(Into::into))
+    pub fn afk_channel<C: Into<ChannelId>>(&mut self, channel: Option<C>) -> &mut Self {
+        self._afk_channel(channel.map(Into::into));
+        self
     }
 
-    fn _afk_channel(mut self, channel: Option<ChannelId>) -> Self {
+    fn _afk_channel(&mut self, channel: Option<ChannelId>) {
         self.0.insert(
             "afk_channel_id",
             match channel {
@@ -36,20 +37,17 @@ impl EditGuild {
                 None => Value::Null,
             },
         );
-
-        self
     }
 
     /// Set the amount of time a user is to be moved to the AFK channel -
     /// configured via [`afk_channel`] - after being AFK.
     ///
     /// [`afk_channel`]: #method.afk_channel
-    pub fn afk_timeout(mut self, timeout: u64) -> Self {
+    pub fn afk_timeout(&mut self, timeout: u64) -> &mut Self {
         self.0.insert(
             "afk_timeout",
             Value::Number(Number::from(timeout)),
         );
-
         self
     }
 
@@ -61,18 +59,21 @@ impl EditGuild {
     /// from the cwd and encode it in base64 to send to Discord.
     ///
     /// ```rust,no_run
-    /// # use serenity::model::id::GuildId;
-    /// # use std::error::Error;
+    /// # use serenity::{http::Http, model::id::GuildId};
+    /// # use std::{error::Error, sync::Arc};
     /// #
     /// # fn try_main() -> Result<(), Box<Error>> {
-    /// #     let mut guild = GuildId(0).to_partial_guild()?;
+    /// #     let http = Arc::new(Http::default());
+    /// #     let mut guild = GuildId(0).to_partial_guild(&http)?;
     /// use serenity::utils;
     ///
     /// // assuming a `guild` has already been bound
     ///
     /// let base64_icon = utils::read_image("./guild_icon.png")?;
     ///
-    /// guild.edit(|g| g.icon(Some(&base64_icon)))?;
+    /// guild.edit(&http, |mut g| {
+    ///     g.icon(Some(&base64_icon))
+    /// })?;
     /// #     Ok(())
     /// # }
     /// #
@@ -82,21 +83,19 @@ impl EditGuild {
     /// ```
     ///
     /// [`utils::read_image`]: ../utils/fn.read_image.html
-    pub fn icon(mut self, icon: Option<&str>) -> Self {
+    pub fn icon(&mut self, icon: Option<&str>) -> &mut Self {
         self.0.insert(
             "icon",
             icon.map_or_else(|| Value::Null, |x| Value::String(x.to_string())),
         );
-
         self
     }
 
     /// Set the name of the guild.
     ///
-    /// **Note**: Must be between (and including) 2-100 characters.
-    pub fn name(mut self, name: &str) -> Self {
+    /// **Note**: Must be between (and including) 2-100 chracters.
+    pub fn name<S: ToString>(&mut self, name: S) -> &mut Self {
         self.0.insert("name", Value::String(name.to_string()));
-
         self
     }
 
@@ -104,15 +103,14 @@ impl EditGuild {
     ///
     /// **Note**: The current user must be the owner of the guild.
     #[inline]
-    pub fn owner<U: Into<UserId>>(self, user_id: U) -> Self {
-        self._owner(user_id.into())
+    pub fn owner<U: Into<UserId>>(&mut self, user_id: U) -> &mut Self {
+        self._owner(user_id.into());
+        self
     }
 
-    fn _owner(mut self, user_id: UserId) -> Self {
+    fn _owner(&mut self, user_id: UserId) {
         let id = Value::Number(Number::from(user_id.0));
         self.0.insert("owner_id", id);
-
-        self
     }
 
     /// Set the voice region of the server.
@@ -122,16 +120,19 @@ impl EditGuild {
     /// Setting the region to [`Region::UsWest`]:
     ///
     /// ```rust,no_run
-    /// # use serenity::model::id::GuildId;
-    /// # use std::error::Error;
+    /// # use serenity::{http::Http, model::id::GuildId};
+    /// # use std::{error::Error, sync::Arc};
     /// #
     /// # fn try_main() -> Result<(), Box<Error>> {
-    /// #     let mut guild = GuildId(0).to_partial_guild()?;
+    /// #     let http = Arc::new(Http::default());
+    /// #     let mut guild = GuildId(0).to_partial_guild(&http)?;
     /// use serenity::model::guild::Region;
     ///
     /// // assuming a `guild` has already been bound
     ///
-    /// guild.edit(|g| g.region(Region::UsWest))?;
+    /// guild.edit(&http, |g| {
+    ///     g.region(Region::UsWest)
+    /// })?;
     /// #     Ok(())
     /// # }
     /// #
@@ -141,9 +142,8 @@ impl EditGuild {
     /// ```
     ///
     /// [`Region::UsWest`]: ../model/guild/enum.Region.html#variant.UsWest
-    pub fn region(mut self, region: Region) -> Self {
+    pub fn region(&mut self, region: Region) -> &mut Self {
         self.0.insert("region", Value::String(region.name().to_string()));
-
         self
     }
 
@@ -153,10 +153,9 @@ impl EditGuild {
     /// You can check this through a guild's [`features`] list.
     ///
     /// [`features`]: ../model/guild/struct.Guild.html#structfield.features
-    pub fn splash(mut self, splash: Option<&str>) -> Self {
+    pub fn splash(&mut self, splash: Option<&str>) -> &mut Self {
         let splash = splash.map_or(Value::Null, |x| Value::String(x.to_string()));
         self.0.insert("splash", splash);
-
         self
     }
 
@@ -172,18 +171,30 @@ impl EditGuild {
     /// Setting the verification level to [`High`][`VerificationLevel::High`]:
     ///
     /// ```rust,ignore
+    /// # use serenity::http::Http;
+    /// # use std::sync::Arc;
+    /// #
+    /// # let http = Arc::new(Http::default());
     /// use serenity::model::guild::VerificationLevel;
     ///
     /// // assuming a `guild` has already been bound
     ///
-    /// if let Err(why) = guild.edit(|g| g.verification_level(VerificationLevel::High)) {
+    /// let edit = guild.edit(&http, |g| {
+    ///     g.verification_level(VerificationLevel::High)
+    /// });
+    ///
+    /// if let Err(why) = edit {
     ///     println!("Error setting verification level: {:?}", why);
     /// }
     ///
     /// // additionally, you may pass in just an integer of the verification
     /// // level
     ///
-    /// if let Err(why) = guild.edit(|g| g.verification_level(3)) {
+    /// let edit = guild.edit(&http, |g| {
+    ///     g.verification_level(3)
+    /// });
+    ///
+    /// if let Err(why) = edit {
     ///     println!("Error setting verification level: {:?}", why);
     /// }
     /// ```
@@ -191,15 +202,14 @@ impl EditGuild {
     /// [`VerificationLevel`]: ../model/guild/enum.VerificationLevel.html
     /// [`VerificationLevel::High`]: ../model/guild/enum.VerificationLevel.html#variant.High
     #[inline]
-    pub fn verification_level<V>(self, verification_level: V) -> Self
+    pub fn verification_level<V>(&mut self, verification_level: V) -> &mut Self
         where V: Into<VerificationLevel> {
-        self._verification_level(verification_level.into())
+        self._verification_level(verification_level.into());
+        self
     }
 
-    fn _verification_level(mut self, verification_level: VerificationLevel) -> Self {
+    fn _verification_level(&mut self, verification_level: VerificationLevel) {
         let num = Value::Number(Number::from(verification_level.num()));
         self.0.insert("verification_level", num);
-
-        self
     }
 }

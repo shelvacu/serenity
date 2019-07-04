@@ -1,6 +1,6 @@
-use constants::VoiceOpCode;
-use gateway::InterMessage;
-use model::{
+use crate::constants::VoiceOpCode;
+use crate::gateway::InterMessage;
+use crate::model::{
     id::{
         ChannelId,
         GuildId,
@@ -14,7 +14,8 @@ use std::sync::{
     Arc
 };
 use super::connection_info::ConnectionInfo;
-use super::{Audio, AudioReceiver, AudioSource, Status as VoiceStatus, threading, LockedAudio};
+use super::{Audio, AudioReceiver, AudioSource, Bitrate, Status as VoiceStatus, threading, LockedAudio};
+use serde_json::json;
 
 /// The handler is responsible for "handling" a single voice connection, acting
 /// as a clean API above the inner connection.
@@ -225,7 +226,7 @@ impl Handler {
     /// can pass in just a boxed receiver, and do not need to specify `Some`.
     ///
     /// Pass `None` to drop the current receiver, if one exists.
-    pub fn listen(&mut self, receiver: Option<Box<AudioReceiver>>) {
+    pub fn listen(&mut self, receiver: Option<Box<dyn AudioReceiver>>) {
         self.send(VoiceStatus::SetReceiver(receiver))
     }
 
@@ -252,12 +253,12 @@ impl Handler {
     ///
     /// [`voice::ffmpeg`]: fn.ffmpeg.html
     /// [`voice::ytdl`]: fn.ytdl.html
-    pub fn play(&mut self, source: Box<AudioSource>) {
+    pub fn play(&mut self, source: Box<dyn AudioSource>) {
         self.play_returning(source);
     }
 
     /// Plays audio from a source, returning the locked audio source.
-    pub fn play_returning(&mut self, source: Box<AudioSource>) -> LockedAudio {
+    pub fn play_returning(&mut self, source: Box<dyn AudioSource>) -> LockedAudio {
         let player = Arc::new(Mutex::new(Audio::new(source)));
         self.send(VoiceStatus::AddSender(player.clone()));
 
@@ -271,11 +272,22 @@ impl Handler {
     ///
     /// [`play`]: #method.play
     /// [`play_returning`]: #method.play_returning
-    pub fn play_only(&mut self, source: Box<AudioSource>) -> LockedAudio {
+    pub fn play_only(&mut self, source: Box<dyn AudioSource>) -> LockedAudio {
         let player = Arc::new(Mutex::new(Audio::new(source)));
         self.send(VoiceStatus::SetSender(Some(player.clone())));
 
         player
+    }
+
+    /// Sets the bitrate for encoding Opus packets sent along
+    /// the channel being managed.
+    ///
+    /// The default rate is 128 kbps.
+    /// Sensible values range between `Bits(512)` and `Bits(512_000)`
+    /// bits per second.
+    /// Alternatively, `Auto` and `Max` remain available.
+    pub fn set_bitrate(&mut self, bitrate: Bitrate) {
+        self.send(VoiceStatus::SetBitrate(bitrate))
     }
 
     /// Stops playing audio from a source, if one is set.

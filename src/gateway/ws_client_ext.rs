@@ -1,10 +1,12 @@
 use chrono::Utc;
-use constants::{self, OpCode};
-use gateway::{CurrentPresence, WsClient};
-use internal::prelude::*;
-use internal::ws_impl::SenderExt;
-use model::id::GuildId;
+use crate::constants::{self, OpCode};
+use crate::gateway::{CurrentPresence, WsClient};
+use crate::internal::prelude::*;
+use crate::internal::ws_impl::SenderExt;
+use crate::model::id::GuildId;
+use serde_json::json;
 use std::env::consts;
+use log::{debug, trace};
 
 pub trait WebSocketGatewayClientExt {
     fn send_chunk_guilds<It>(
@@ -31,7 +33,7 @@ pub trait WebSocketGatewayClientExt {
         &mut self,
         shard_info: &[u64; 2],
         session_id: &str,
-        seq: &u64,
+        seq: u64,
         token: &str,
     ) -> Result<()>;
 }
@@ -92,7 +94,7 @@ impl WebSocketGatewayClientExt for WsClient {
         shard_info: &[u64; 2],
         current_presence: &CurrentPresence,
     ) -> Result<()> {
-        let &(ref game, ref status) = current_presence;
+        let &(ref activity, ref status) = current_presence;
         let now = Utc::now().timestamp() as u64;
 
         debug!("[Shard {:?}] Sending presence update", shard_info);
@@ -103,7 +105,7 @@ impl WebSocketGatewayClientExt for WsClient {
                 "afk": false,
                 "since": now,
                 "status": status.name(),
-                "game": game.as_ref().map(|x| json!({
+                "game": activity.as_ref().map(|x| json!({
                     "name": x.name,
                     "type": x.kind,
                     "url": x.url,
@@ -116,7 +118,7 @@ impl WebSocketGatewayClientExt for WsClient {
         &mut self,
         shard_info: &[u64; 2],
         session_id: &str,
-        seq: &u64,
+        seq: u64,
         token: &str,
     ) -> Result<()> {
         debug!("[Shard {:?}] Sending resume; seq: {}", shard_info, seq);

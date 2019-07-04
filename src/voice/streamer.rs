@@ -1,29 +1,23 @@
 use byteorder::{LittleEndian, ReadBytesExt};
-use internal::prelude::*;
+use crate::internal::prelude::*;
+use audiopus::{
+    Channels,
+    coder::Decoder as OpusDecoder,
+    Result as OpusResult,
+};
+use parking_lot::Mutex;
 use serde_json;
 use std::{
     ffi::OsStr,
     fs::File,
-    io::{
-        BufReader,
-        ErrorKind as IoErrorKind,
-        Read,
-        Result as IoResult
-    },
-    process::{
-        Child,
-        Command,
-        Stdio
-    },
-    result::Result as StdResult
+    io::{BufReader, ErrorKind as IoErrorKind, Read, Result as IoResult},
+    process::{Child, Command, Stdio},
+    result::Result as StdResult,
+    sync::Arc,
 };
-use super::{
-    AudioSource,
-    AudioType,
-    DcaError,
-    DcaMetadata,
-    VoiceError
-};
+use super::{AudioSource, AudioType, DcaError, DcaMetadata, VoiceError, audio};
+use log::{debug, warn};
+use crate::prelude::SerenityError;
 
 struct ChildContainer(Child);
 
@@ -41,10 +35,24 @@ impl Drop for ChildContainer {
     }
 }
 
+// Since each audio item needs its own decoder, we need to
+// work around the fact that OpusDecoders aint sendable.
+struct SendDecoder(OpusDecoder);
+
+impl SendDecoder {
+    fn decode_float(&mut self, input: &[u8], output: &mut [f32], fec: bool) -> OpusResult<usize> {
+        let &mut SendDecoder(ref mut sd) = self;
+        sd.decode_float(input, output, fec)
+    }
+}
+
+unsafe impl Send for SendDecoder {}
+
 struct InputSource<R: Read + Send + 'static> {
     stereo: bool,
     reader: R,
     kind: AudioType,
+    decoder: Option<Arc<Mutex<SendDecoder>>>,
 }
 
 impl<R: Read + Send> AudioSource for InputSource<R> {
@@ -96,14 +104,32 @@ impl<R: Read + Send> AudioSource for InputSource<R> {
             },
         }
     }
+
+    fn decode_and_add_opus_frame(&mut self, float_buffer: &mut [f32; 1920], volume: f32) -> Option<usize> {
+        let decoder_lock = self.decoder.as_mut()?.clone();
+        let frame = self.read_opus_frame()?;
+        let mut local_buf = [0f32; 960 * 2];
+
+        let count = {
+            let mut decoder = decoder_lock.lock();
+
+            decoder.decode_float(frame.as_slice(), &mut local_buf, false).ok()?
+        };
+
+        for (i, float_buffer_element) in float_buffer.iter_mut().enumerate().take(1920) {
+            *float_buffer_element += local_buf[i] * volume;
+        }
+
+        Some(count)
+    }
 }
 
 /// Opens an audio file through `ffmpeg` and creates an audio source.
-pub fn ffmpeg<P: AsRef<OsStr>>(path: P) -> Result<Box<AudioSource>> {
+pub fn ffmpeg<P: AsRef<OsStr>>(path: P) -> Result<Box<dyn AudioSource>> {
     _ffmpeg(path.as_ref())
 }
 
-fn _ffmpeg(path: &OsStr) -> Result<Box<AudioSource>> {
+fn _ffmpeg(path: &OsStr) -> Result<Box<dyn AudioSource>> {
     // Will fail if the path is not to a file on the fs. Likely a YouTube URI.
     let is_stereo = is_stereo(path).unwrap_or(false);
     let stereo_val = if is_stereo { "2" } else { "1" };
@@ -150,11 +176,11 @@ fn _ffmpeg(path: &OsStr) -> Result<Box<AudioSource>> {
 pub fn ffmpeg_optioned<P: AsRef<OsStr>>(
     path: P,
     args: &[&str],
-) -> Result<Box<AudioSource>> {
+) -> Result<Box<dyn AudioSource>> {
     _ffmpeg_optioned(path.as_ref(), args, None)
 }
 
-fn _ffmpeg_optioned(path: &OsStr, args: &[&str], is_stereo_known: Option<bool>) -> Result<Box<AudioSource>> {
+fn _ffmpeg_optioned(path: &OsStr, args: &[&str], is_stereo_known: Option<bool>) -> Result<Box<dyn AudioSource>> {
     let is_stereo = is_stereo_known
         .or_else(|| is_stereo(path).ok())
         .unwrap_or(false);
@@ -173,11 +199,11 @@ fn _ffmpeg_optioned(path: &OsStr, args: &[&str], is_stereo_known: Option<bool>) 
 
 /// Creates a streamed audio source from a DCA file.
 /// Currently only accepts the DCA1 format.
-pub fn dca<P: AsRef<OsStr>>(path: P) -> StdResult<Box<AudioSource>, DcaError> {
+pub fn dca<P: AsRef<OsStr>>(path: P) -> StdResult<Box<dyn AudioSource>, DcaError> {
     _dca(path.as_ref())
 }
 
-fn _dca(path: &OsStr) -> StdResult<Box<AudioSource>, DcaError> {
+fn _dca(path: &OsStr) -> StdResult<Box<dyn AudioSource>, DcaError> {
     let file = File::open(path).map_err(DcaError::IoError)?;
 
     let mut reader = BufReader::new(file);
@@ -222,58 +248,74 @@ fn _dca(path: &OsStr) -> StdResult<Box<AudioSource>, DcaError> {
 /// If you want to decode a `.opus` file, use [`ffmpeg`]
 ///
 /// [`ffmpeg`]: fn.ffmpeg.html
-pub fn opus<R: Read + Send + 'static>(is_stereo: bool, reader: R) -> Box<AudioSource> {
+pub fn opus<R: Read + Send + 'static>(is_stereo: bool, reader: R) -> Box<dyn AudioSource> {
     Box::new(InputSource {
         stereo: is_stereo,
         reader,
         kind: AudioType::Opus,
+        decoder: Some(
+            Arc::new(Mutex::new(
+                // We always want to decode *to* stereo, for mixing reasons.
+                SendDecoder(OpusDecoder::new(audio::SAMPLE_RATE, Channels::Stereo).unwrap())
+            ))
+        ),
     })
 }
 
 /// Creates a PCM audio source.
-pub fn pcm<R: Read + Send + 'static>(is_stereo: bool, reader: R) -> Box<AudioSource> {
+pub fn pcm<R: Read + Send + 'static>(is_stereo: bool, reader: R) -> Box<dyn AudioSource> {
     Box::new(InputSource {
         stereo: is_stereo,
         reader,
         kind: AudioType::Pcm,
+        decoder: None,
     })
 }
 
 /// Creates a streamed audio source with `youtube-dl` and `ffmpeg`.
-pub fn ytdl(uri: &str) -> Result<Box<AudioSource>> {
-    let args = [
+pub fn ytdl(uri: &str) -> Result<Box<dyn AudioSource>> {
+    let ytdl_args = [
         "-f",
         "webm[abr>0]/bestaudio/best",
+        "-R",
+        "infinite",
         "--no-playlist",
-        "--print-json",
-        "--skip-download",
+        "--ignore-config",
         uri,
+        "-o",
+        "-"
     ];
 
-    let out = Command::new("youtube-dl")
-        .args(&args)
+    let ffmpeg_args = [
+        "-f",
+        "s16le",
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        "-acodec",
+        "pcm_s16le",
+        "-",
+    ];
+
+    let youtube_dl = Command::new("youtube-dl")
+        .args(&ytdl_args)
         .stdin(Stdio::null())
-        .output()?;
+        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()?;
 
-    if !out.status.success() {
-        return Err(Error::Voice(VoiceError::YouTubeDLRun(out)));
-    }
+    let ffmpeg = Command::new("ffmpeg")
+        .arg("-re")
+        .arg("-i")
+        .arg("-")
+        .args(&ffmpeg_args)
+        .stdin(youtube_dl.stdout.ok_or(SerenityError::Other("Failed to open youtube-dl stdout"))?)
+        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()?;
 
-    let value = serde_json::from_reader(&out.stdout[..])?;
-    let mut obj = match value {
-        Value::Object(obj) => obj,
-        other => return Err(Error::Voice(VoiceError::YouTubeDLProcessing(other))),
-    };
-
-    let uri = match obj.remove("url") {
-        Some(v) => match v {
-            Value::String(uri) => uri,
-            other => return Err(Error::Voice(VoiceError::YouTubeDLUrl(other))),
-        },
-        None => return Err(Error::Voice(VoiceError::YouTubeDLUrl(Value::Object(obj)))),
-    };
-
-    ffmpeg(&uri)
+    Ok(pcm(true, ChildContainer(ffmpeg)))
 }
 
 fn is_stereo(path: &OsStr) -> Result<bool> {

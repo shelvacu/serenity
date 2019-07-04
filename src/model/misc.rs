@@ -1,7 +1,7 @@
 //! Miscellaneous helper traits, enums, and structs for models.
 
 use super::prelude::*;
-use internal::RwLockExt;
+use crate::internal::RwLockExt;
 
 #[cfg(all(feature = "model", feature = "utils"))]
 use std::error::Error as StdError;
@@ -12,7 +12,7 @@ use std::str::FromStr;
 #[cfg(all(feature = "model", feature = "utils"))]
 use std::fmt;
 #[cfg(all(feature = "model", any(feature = "cache", feature = "utils")))]
-use utils;
+use crate::utils;
 
 /// Allows something - such as a channel or role - to be mentioned in a message.
 pub trait Mentionable {
@@ -32,6 +32,7 @@ impl Mentionable for Channel {
             Channel::Private(ref x) => x.with(Mentionable::mention),
             Channel::Group(ref x) => x.with(Mentionable::mention),
             Channel::Category(ref x) => x.with(Mentionable::mention),
+            Channel::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -93,11 +94,13 @@ impl Mentionable for GuildChannel {
 pub enum UserParseError {
     InvalidUsername,
     Rest(Box<Error>),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 #[cfg(all(feature = "model", feature = "utils"))]
 impl fmt::Display for UserParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.description()) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.description()) }
 }
 
 #[cfg(all(feature = "model", feature = "utils"))]
@@ -108,20 +111,7 @@ impl StdError for UserParseError {
         match *self {
             InvalidUsername => "invalid username",
             Rest(_) => "could not fetch",
-        }
-    }
-}
-
-#[cfg(all(feature = "model", feature = "utils"))]
-impl FromStr for User {
-    type Err = UserParseError;
-
-    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-        match utils::parse_username(s) {
-            Some(x) => UserId(x as u64)
-                .to_user()
-                .map_err(|e| UserParseError::Rest(Box::new(e))),
-            _ => Err(UserParseError::InvalidUsername),
+            __Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -137,7 +127,7 @@ macro_rules! impl_from_str {
 
             #[cfg(all(feature = "model", feature = "utils"))]
             impl fmt::Display for $err {
-                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.description()) }
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.description()) }
             }
 
             #[cfg(all(feature = "model", feature = "utils"))]
@@ -176,7 +166,7 @@ macro_rules! impl_from_str {
 
             #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
             impl fmt::Display for $err {
-                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.description()) }
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.description()) }
             }
 
             #[cfg(all(feature = "cache", feature = "model", feature = "utils"))]
@@ -236,6 +226,8 @@ impl FromStr for EmojiIdentifier {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AffectedComponent {
     pub name: String,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 /// An incident retrieved from the Discord status page.
@@ -254,6 +246,8 @@ pub struct Incident {
     pub short_link: String,
     pub status: String,
     pub updated_at: String,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 /// An update to an incident from the Discord status page.
@@ -270,6 +264,8 @@ pub struct IncidentUpdate {
     pub incident_id: String,
     pub status: IncidentStatus,
     pub updated_at: String,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 /// The type of status update during a service incident.
@@ -281,6 +277,8 @@ pub enum IncidentStatus {
     Monitoring,
     Postmortem,
     Resolved,
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 /// A Discord status maintenance message. This can be either for active
@@ -292,11 +290,13 @@ pub struct Maintenance {
     pub name: String,
     pub start: String,
     pub stop: String,
+    #[serde(skip)]
+    pub(crate) _nonexhaustive: (),
 }
 
 #[cfg(test)]
 mod test {
-    use model::prelude::*;
+    use crate::model::prelude::*;
 
     #[test]
     fn test_formatters() {
@@ -309,10 +309,10 @@ mod test {
 
     #[cfg(feature = "utils")]
     mod utils {
-        use model::prelude::*;
+        use crate::model::prelude::*;
         use parking_lot::RwLock;
         use std::sync::Arc;
-        use utils::Colour;
+        use crate::utils::Colour;
 
         #[test]
         fn test_mention() {
@@ -330,6 +330,8 @@ mod test {
                 topic: None,
                 user_limit: None,
                 nsfw: false,
+                slow_mode_rate: Some(0),
+                _nonexhaustive: (),
             })));
             let emoji = Emoji {
                 animated: false,
@@ -338,6 +340,7 @@ mod test {
                 managed: true,
                 require_colons: true,
                 roles: vec![],
+                _nonexhaustive: (),
             };
             let role = Role {
                 id: RoleId(2),
@@ -348,6 +351,7 @@ mod test {
                 name: "fake role".to_string(),
                 permissions: Permissions::empty(),
                 position: 1,
+                _nonexhaustive: (),
             };
             let user = User {
                 id: UserId(6),
@@ -355,6 +359,7 @@ mod test {
                 bot: false,
                 discriminator: 4132,
                 name: "fake".to_string(),
+                _nonexhaustive: (),
             };
             let member = Member {
                 deaf: false,
@@ -364,6 +369,7 @@ mod test {
                 nick: None,
                 roles: vec![],
                 user: Arc::new(RwLock::new(user.clone())),
+                _nonexhaustive: (),
             };
 
             assert_eq!(ChannelId(1).mention(), "<#1>");

@@ -1,5 +1,5 @@
-use internal::prelude::*;
-use model::ModelError;
+use crate::internal::prelude::*;
+use crate::model::ModelError;
 use serde_json::Error as JsonError;
 use std::{
     error::Error as StdError,
@@ -12,22 +12,22 @@ use std::{
     num::ParseIntError
 };
 
-#[cfg(feature = "hyper")]
-use hyper::Error as HyperError;
-#[cfg(feature = "native-tls")]
-use native_tls::Error as TlsError;
-#[cfg(feature = "voice")]
-use opus::Error as OpusError;
-#[cfg(feature = "websocket")]
-use websocket::result::WebSocketError;
-#[cfg(feature = "client")]
-use client::ClientError;
-#[cfg(feature = "gateway")]
-use gateway::GatewayError;
 #[cfg(feature = "http")]
-use http::HttpError;
+use reqwest::{Error as ReqwestError, header::InvalidHeaderValue};
 #[cfg(feature = "voice")]
-use voice::VoiceError;
+use audiopus::Error as OpusError;
+#[cfg(feature = "gateway")]
+use tungstenite::error::Error as TungsteniteError;
+#[cfg(feature = "client")]
+use crate::client::ClientError;
+#[cfg(feature = "gateway")]
+use crate::gateway::GatewayError;
+#[cfg(feature = "http")]
+use crate::http::HttpError;
+#[cfg(all(feature = "gateway", not(feature = "native_tls_backend")))]
+use crate::internal::ws_impl::RustlsError;
+#[cfg(feature = "voice")]
+use crate::voice::VoiceError;
 
 /// The common result type between most library functions.
 ///
@@ -93,16 +93,13 @@ pub enum Error {
     ///
     /// [`http`]: http/index.html
     #[cfg(feature = "http")]
-    Http(HttpError),
-    /// An error from the `hyper` crate.
-    #[cfg(feature = "hyper")]
-    Hyper(HyperError),
-    /// An error from the `native-tls` crate.
-    #[cfg(feature = "native-tls")]
-    Tls(TlsError),
-    /// An error from the `rust-websocket` crate.
+    Http(Box<HttpError>),
+    /// An error occuring in rustls
+    #[cfg(all(feature = "gateway", not(feature = "native_tls_backend")))]
+    Rustls(RustlsError),
+    /// An error from the `tungstenite` crate.
     #[cfg(feature = "gateway")]
-    WebSocket(WebSocketError),
+    Tungstenite(TungsteniteError),
     /// An error from the `opus` crate.
     #[cfg(feature = "voice")]
     Opus(OpusError),
@@ -111,6 +108,8 @@ pub enum Error {
     /// [voice module]: voice/index.html
     #[cfg(feature = "voice")]
     Voice(VoiceError),
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl From<FormatError> for Error {
@@ -120,11 +119,6 @@ impl From<FormatError> for Error {
 #[cfg(feature = "gateway")]
 impl From<GatewayError> for Error {
     fn from(e: GatewayError) -> Error { Error::Gateway(e) }
-}
-
-#[cfg(feature = "hyper")]
-impl From<HyperError> for Error {
-    fn from(e: HyperError) -> Error { Error::Hyper(e) }
 }
 
 impl From<IoError> for Error {
@@ -148,18 +142,38 @@ impl From<OpusError> for Error {
     fn from(e: OpusError) -> Error { Error::Opus(e) }
 }
 
-#[cfg(feature = "native-tls")]
-impl From<TlsError> for Error {
-    fn from(e: TlsError) -> Error { Error::Tls(e) }
+#[cfg(feature = "voice")]
+impl From<VoiceError> for Error {
+    fn from(e: VoiceError) -> Error { Error::Voice(e) }
+}
+
+#[cfg(all(feature = "gateway", not(feature = "native_tls_backend")))]
+impl From<RustlsError> for Error {
+    fn from(e: RustlsError) -> Error { Error::Rustls(e) }
 }
 
 #[cfg(feature = "gateway")]
-impl From<WebSocketError> for Error {
-    fn from(e: WebSocketError) -> Error { Error::WebSocket(e) }
+impl From<TungsteniteError> for Error {
+    fn from(e: TungsteniteError) -> Error { Error::Tungstenite(e) }
+}
+
+#[cfg(feature = "http")]
+impl From<HttpError> for Error {
+    fn from(e: HttpError) -> Error { Error::Http(Box::new(e)) }
+}
+
+#[cfg(feature = "http")]
+impl From<InvalidHeaderValue> for Error {
+    fn from(e: InvalidHeaderValue) -> Error { HttpError::InvalidHeader(e).into() }
+}
+
+#[cfg(feature = "http")]
+impl From<ReqwestError> for Error {
+    fn from(e: ReqwestError) -> Error { HttpError::Request(e).into() }
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.description())
     }
 }
@@ -181,27 +195,24 @@ impl StdError for Error {
             Error::Gateway(ref inner) => inner.description(),
             #[cfg(feature = "http")]
             Error::Http(ref inner) => inner.description(),
-            #[cfg(feature = "http")]
-            Error::Hyper(ref inner) => inner.description(),
             #[cfg(feature = "voice")]
             Error::Opus(ref inner) => inner.description(),
-            #[cfg(feature = "native-tls")]
-            Error::Tls(ref inner) => inner.description(),
+            #[cfg(all(feature = "gateway", not(feature = "native_tls_backend")))]
+            Error::Rustls(ref inner) => inner.description(),
+            #[cfg(feature = "gateway")]
+            Error::Tungstenite(ref inner) => inner.description(),
             #[cfg(feature = "voice")]
             Error::Voice(_) => "Voice error",
-            #[cfg(feature = "gateway")]
-            Error::WebSocket(ref inner) => inner.description(),
+            Error::__Nonexhaustive => unreachable!(),
         }
     }
 
-    fn cause(&self) -> Option<&StdError> {
+    fn cause(&self) -> Option<&dyn StdError> {
         match *self {
-            #[cfg(feature = "http")]
-            Error::Hyper(ref inner) => Some(inner),
             Error::Json(ref inner) => Some(inner),
             Error::Io(ref inner) => Some(inner),
             #[cfg(feature = "gateway")]
-            Error::WebSocket(ref inner) => Some(inner),
+            Error::Tungstenite(ref inner) => Some(inner),
             _ => None,
         }
     }
