@@ -26,6 +26,7 @@ pub enum Reason {
     /// Information for the user but also for logging purposes.
     UserAndLog { user: String, log: String },
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 

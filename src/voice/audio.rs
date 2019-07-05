@@ -45,6 +45,7 @@ pub enum AudioType {
     Opus,
     Pcm,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 

@@ -432,6 +432,7 @@ impl Connection {
                             None => 0,
                         }
                     },
+                    #[cfg(not(feature = "allow_exhaustive_enum"))]
                     AudioType::__Nonexhaustive => unreachable!(),
                 };
 

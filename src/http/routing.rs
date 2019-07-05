@@ -262,6 +262,7 @@ pub enum Route {
     /// post-hooks are not executed.
     None,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -916,6 +917,7 @@ pub enum RouteInfo<'a> {
         message_id: u64,
     },
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -1440,6 +1442,7 @@ impl<'a> RouteInfo<'a> {
                 Route::ChannelsIdPinsMessageId(channel_id),
                 Cow::from(Route::channel_pin(channel_id, message_id)),
             ),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             RouteInfo::__Nonexhaustive => unreachable!(),
         }
     }

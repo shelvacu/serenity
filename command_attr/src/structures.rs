@@ -20,6 +20,7 @@ pub enum OnlyIn {
     Guild,
     None,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -30,6 +31,7 @@ impl ToTokens for OnlyIn {
             OnlyIn::Dm => stream.extend(quote!(#only_in_path::Dm)),
             OnlyIn::Guild => stream.extend(quote!(#only_in_path::Guild)),
             OnlyIn::None => stream.extend(quote!(#only_in_path::None)),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             OnlyIn::__Nonexhaustive => unreachable!(),
         }
     }
@@ -314,6 +316,7 @@ pub enum HelpBehaviour {
     Hide,
     Nothing,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -335,6 +338,7 @@ impl ToTokens for HelpBehaviour {
             HelpBehaviour::Strike => stream.extend(quote!(#help_behaviour_path::Strike)),
             HelpBehaviour::Hide => stream.extend(quote!(#help_behaviour_path::Hide)),
             HelpBehaviour::Nothing => stream.extend(quote!(#help_behaviour_path::Nothing)),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             HelpBehaviour::__Nonexhaustive => unreachable!(),
         }
     }

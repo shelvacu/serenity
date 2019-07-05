@@ -168,6 +168,7 @@ pub enum AttachmentType<'a> {
     /// Indicates that the `AttachmentType` is a `Path`
     Path(&'a Path),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -203,6 +204,7 @@ pub enum GuildPagination {
     /// The Id to get the guilds before.
     Before(GuildId),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 

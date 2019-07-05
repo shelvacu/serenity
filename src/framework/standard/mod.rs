@@ -72,6 +72,7 @@ pub enum DispatchError {
     /// When the bot ignores webhooks and a command was issued by one.
     WebhookAuthor,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 

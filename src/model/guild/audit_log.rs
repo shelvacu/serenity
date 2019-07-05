@@ -26,6 +26,7 @@ pub enum Target {
     Webhook = 60,
     Emoji = 70,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -42,6 +43,7 @@ pub enum Action {
     Emoji(ActionEmoji),
     MessageDelete,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -59,6 +61,7 @@ impl Action {
             Action::Webhook(ref x) => x.num(),
             Action::Emoji(ref x) => x.num(),
             Action::MessageDelete => 72,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Action::__Nonexhaustive => unreachable!(),
         }
     }
@@ -71,6 +74,7 @@ pub enum ActionChannel {
     Update = 11,
     Delete = 12,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -80,6 +84,7 @@ impl ActionChannel {
             ActionChannel::Create => 10,
             ActionChannel::Update => 11,
             ActionChannel::Delete => 12,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ActionChannel::__Nonexhaustive => unreachable!(),
         }
     }
@@ -92,6 +97,7 @@ pub enum ActionChannelOverwrite {
     Update = 14,
     Delete = 15,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -101,6 +107,7 @@ impl ActionChannelOverwrite {
             ActionChannelOverwrite::Create => 13,
             ActionChannelOverwrite::Update => 14,
             ActionChannelOverwrite::Delete => 15,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ActionChannelOverwrite::__Nonexhaustive => unreachable!(),
         }
     }
@@ -116,6 +123,7 @@ pub enum ActionMember {
     Update = 24,
     RoleUpdate = 25,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -128,6 +136,7 @@ impl ActionMember {
             ActionMember::BanRemove => 23,
             ActionMember::Update => 24,
             ActionMember::RoleUpdate => 25,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ActionMember::__Nonexhaustive => unreachable!(),
         }
     }
@@ -140,6 +149,7 @@ pub enum ActionRole {
     Update = 31,
     Delete = 32,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -149,6 +159,7 @@ impl ActionRole {
             ActionRole::Create => 30,
             ActionRole::Update => 31,
             ActionRole::Delete => 32,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ActionRole::__Nonexhaustive => unreachable!(),
         }
     }
@@ -161,6 +172,7 @@ pub enum ActionInvite {
     Update = 41,
     Delete = 42,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -170,6 +182,7 @@ impl ActionInvite {
             ActionInvite::Create => 40,
             ActionInvite::Update => 41,
             ActionInvite::Delete => 42,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ActionInvite::__Nonexhaustive => unreachable!(),
         }
     }
@@ -182,6 +195,7 @@ pub enum ActionWebhook {
     Update = 51,
     Delete = 52,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -191,6 +205,7 @@ impl ActionWebhook {
             ActionWebhook::Create => 50,
             ActionWebhook::Update => 51,
             ActionWebhook::Delete => 52,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ActionWebhook::__Nonexhaustive => unreachable!(),
         }
     }
@@ -203,6 +218,7 @@ pub enum ActionEmoji {
     Delete = 61,
     Update = 62,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -212,6 +228,7 @@ impl ActionEmoji {
             ActionEmoji::Create => 60,
             ActionEmoji::Update => 61,
             ActionEmoji::Delete => 62,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ActionEmoji::__Nonexhaustive => unreachable!(),
         }
     }

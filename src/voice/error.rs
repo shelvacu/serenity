@@ -29,6 +29,7 @@ pub enum VoiceError {
     /// The JSON output is given.
     YouTubeDLUrl(Value),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -40,5 +41,6 @@ pub enum DcaError {
     InvalidMetadata(JsonError),
     InvalidSize(i32),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }

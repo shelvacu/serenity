@@ -132,6 +132,7 @@ pub enum Error {
     /// [`ChannelType`]: ../channel/enum.ChannelType.html
     InvalidChannelType,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -153,6 +154,7 @@ impl StdError for Error {
             Error::ItemMissing => "The required item is missing from the cache",
             Error::MessageTooLong(_) => "Message too large",
             Error::MessagingBot => "Attempted to message another bot user",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Error::__Nonexhaustive => unreachable!(),
         }
     }

@@ -65,6 +65,7 @@ pub enum Channel {
     /// [`GuildChannel`]: struct.GuildChannel.html
     Category(Arc<RwLock<ChannelCategory>>),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -256,6 +257,7 @@ impl Channel {
             Channel::Category(ref category) => {
                 category.read().delete(cache_http)?;
             },
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         }
 
@@ -270,6 +272,7 @@ impl Channel {
             Channel::Guild(ref channel) => channel.with(|c| c.is_nsfw()),
             Channel::Category(ref category) => category.with(|c| c.is_nsfw()),
             Channel::Group(_) | Channel::Private(_) => false,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         }
     }
@@ -286,6 +289,7 @@ impl Channel {
             Channel::Guild(ref ch) => ch.with(|c| c.id),
             Channel::Private(ref ch) => ch.with(|c| c.id),
             Channel::Category(ref category) => category.with(|c| c.id),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         }
     }
@@ -349,6 +353,7 @@ impl Serialize for Channel {
             Channel::Private(ref c) => {
                 PrivateChannel::serialize(&*c.read(), serializer)
             },
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         }
     }
@@ -380,6 +385,7 @@ impl Display for Channel {
                 Display::fmt(&recipient.name, f)
             },
             Channel::Category(ref category) => Display::fmt(&category.read().name, f),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         }
     }
@@ -413,6 +419,7 @@ pub enum ChannelType {
     /// [`NewsChannel`]: struct.NewsChannel.html
     News = 5,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -436,6 +443,7 @@ impl ChannelType {
             ChannelType::Voice => "voice",
             ChannelType::Category => "category",
             ChannelType::News => "news",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ChannelType::__Nonexhaustive => unreachable!(),
         }
     }
@@ -448,6 +456,7 @@ impl ChannelType {
             ChannelType::Group => 3,
             ChannelType::Category => 4,
             ChannelType::News => 5,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ChannelType::__Nonexhaustive => unreachable!(),
         }
     }
@@ -494,6 +503,7 @@ impl Serialize for PermissionOverwrite {
         let (id, kind) = match self.kind {
             PermissionOverwriteType::Member(id) => (id.0, "member"),
             PermissionOverwriteType::Role(id) => (id.0, "role"),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             PermissionOverwriteType::__Nonexhaustive => unreachable!(),
         };
 
@@ -519,6 +529,7 @@ pub enum PermissionOverwriteType {
     /// A role which is having its permission overwrites edited.
     Role(RoleId),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 

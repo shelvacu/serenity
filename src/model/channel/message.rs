@@ -689,6 +689,7 @@ pub enum MessageType {
     UserPremiumGuildSubscriptionTier2 = 10,
     UserPremiumGuildSubscriptionTier3 = 11,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -728,6 +729,7 @@ impl MessageType {
             UserPremiumGuildSubscriptionTier1 => 9,
             UserPremiumGuildSubscriptionTier2 => 10,
             UserPremiumGuildSubscriptionTier3 => 11,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             __Nonexhaustive => unreachable!(),
         }
     }

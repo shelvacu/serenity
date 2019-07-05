@@ -107,6 +107,7 @@ impl CreateChannel {
             let (id, kind) = match perm.kind {
                 PermissionOverwriteType::Member(id) => (id.0, "member"),
                 PermissionOverwriteType::Role(id) => (id.0, "role"),
+                #[cfg(not(feature = "allow_exhaustive_enum"))]
                 PermissionOverwriteType::__Nonexhaustive => unreachable!(),
             };
 

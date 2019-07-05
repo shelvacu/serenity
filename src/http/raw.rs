@@ -1216,6 +1216,7 @@ impl Http {
         let (after, before) = match *target {
             GuildPagination::After(id) => (Some(id.0), None),
             GuildPagination::Before(id) => (None, Some(id.0)),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             GuildPagination::__Nonexhaustive => unreachable!(),
         };
 
@@ -1504,6 +1505,7 @@ impl Http {
                     multipart = multipart
                         .file(file_num.to_string(), path)?;
                 },
+                #[cfg(not(feature = "allow_exhaustive_enum"))]
                 AttachmentType::__Nonexhaustive => unreachable!(),
             }
 

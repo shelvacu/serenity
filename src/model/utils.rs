@@ -113,6 +113,7 @@ pub fn deserialize_private_channels<'de, D: Deserializer<'de>>(
             Channel::Private(ref channel) => channel.read().id,
             Channel::Guild(_) => unreachable!("Guild private channel decode"),
             Channel::Category(_) => unreachable!("Channel category private channel decode"),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         };
 
@@ -305,6 +306,7 @@ pub fn user_has_perms(cache: impl AsRef<CacheRwLock>, channel_id: ChannelId, mut
             // just assume that all permissions are granted and return `true`.
             return Ok(true);
         },
+        #[cfg(not(feature = "allow_exhaustive_enum"))]
         Channel::__Nonexhaustive => unreachable!(),
     };
 

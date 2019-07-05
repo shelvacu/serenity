@@ -32,6 +32,7 @@ impl Mentionable for Channel {
             Channel::Private(ref x) => x.with(Mentionable::mention),
             Channel::Group(ref x) => x.with(Mentionable::mention),
             Channel::Category(ref x) => x.with(Mentionable::mention),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         }
     }
@@ -95,6 +96,7 @@ pub enum UserParseError {
     InvalidUsername,
     Rest(Box<Error>),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -111,6 +113,7 @@ impl StdError for UserParseError {
         match *self {
             InvalidUsername => "invalid username",
             Rest(_) => "could not fetch",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             __Nonexhaustive => unreachable!(),
         }
     }
@@ -278,6 +281,7 @@ pub enum IncidentStatus {
     Postmortem,
     Resolved,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 

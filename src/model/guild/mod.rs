@@ -1863,6 +1863,7 @@ pub enum GuildContainer {
     /// A guild's id, which can be used to search the cache for a guild.
     Id(GuildId),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -1955,6 +1956,7 @@ pub enum GuildStatus {
     OnlineGuild(Guild),
     Offline(GuildUnavailable),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -1968,6 +1970,7 @@ impl GuildStatus {
             GuildStatus::Offline(offline) => offline.id,
             GuildStatus::OnlineGuild(ref guild) => guild.id,
             GuildStatus::OnlinePartialGuild(ref partial_guild) => partial_guild.id,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             GuildStatus::__Nonexhaustive => unreachable!(),
         }
     }
@@ -1981,6 +1984,7 @@ pub enum DefaultMessageNotificationLevel {
     /// Receive only mentions.
     Mentions = 1,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -1996,6 +2000,7 @@ impl DefaultMessageNotificationLevel {
         match self {
             DefaultMessageNotificationLevel::All => 0,
             DefaultMessageNotificationLevel::Mentions => 1,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             DefaultMessageNotificationLevel::__Nonexhaustive => unreachable!(),
         }
     }
@@ -2011,6 +2016,7 @@ pub enum ExplicitContentFilter {
     /// Scan messages sent by all members.
     All = 2,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -2028,6 +2034,7 @@ impl ExplicitContentFilter {
             ExplicitContentFilter::None => 0,
             ExplicitContentFilter::WithoutRole => 1,
             ExplicitContentFilter::All => 2,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ExplicitContentFilter::__Nonexhaustive => unreachable!(),
         }
     }
@@ -2041,6 +2048,7 @@ pub enum MfaLevel {
     /// MFA is enabled.
     Elevated = 1,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -2056,6 +2064,7 @@ impl MfaLevel {
         match self {
             MfaLevel::None => 0,
             MfaLevel::Elevated => 1,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             MfaLevel::__Nonexhaustive => unreachable!(),
         }
     }
@@ -2083,6 +2092,7 @@ pub enum Region {
     #[serde(rename = "vip-us-east")] VipUsEast,
     #[serde(rename = "vip-us-west")] VipUsWest,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -2107,6 +2117,7 @@ impl Region {
             Region::VipAmsterdam => "vip-amsterdam",
             Region::VipUsEast => "vip-us-east",
             Region::VipUsWest => "vip-us-west",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Region::__Nonexhaustive => unreachable!(),
         }
     }
@@ -2129,6 +2140,7 @@ pub enum VerificationLevel {
     /// Must have a verified phone on the user's Discord account.
     Higher = 4,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -2150,6 +2162,7 @@ impl VerificationLevel {
             VerificationLevel::Medium => 2,
             VerificationLevel::High => 3,
             VerificationLevel::Higher => 4,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             VerificationLevel::__Nonexhaustive => unreachable!(),
         }
     }

@@ -47,7 +47,7 @@ macro_rules! feature_cache {
 }
 
 macro_rules! enum_number {
-    ($name:ident { $($variant:ident, )* }) => {
+    ($name:ident { $( $(#[$m:meta])* $variant:ident, )* }) => {
         impl ::serde::Serialize for $name {
             fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
                 where S: ::serde::Serializer
@@ -77,7 +77,10 @@ macro_rules! enum_number {
                         // Rust does not come with a simple way of converting a
                         // number to an enum, so use a big `match`.
                         match value {
-                            $( v if v == $name::$variant as u64 => Ok($name::$variant), )*
+                            $(
+                                $( #[$m] )*
+                                v if v == $name::$variant as u64 => Ok($name::$variant),
+                            )*
                             _ => Err(E::custom(
                                 format!("unknown {} value: {}",
                                 stringify!($name), value))),

@@ -109,6 +109,7 @@ impl CacheUpdate for ChannelDeleteEvent {
             // These are only relevant if this is a selfbot.
             // TODO: Shouldn't I delete these from the cache?
             Channel::Private(_) | Channel::Group(_) => (),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         };
 
@@ -281,6 +282,7 @@ impl CacheUpdate for ChannelUpdateEvent {
                     .get_mut(&category.read().id)
                     { c.clone_from(category) }
             },
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         }
 
@@ -1122,6 +1124,7 @@ impl CacheUpdate for ReadyEvent {
                     cache.insert_guild(guild);
                 },
                 GuildStatus::OnlinePartialGuild(_) => {},
+                #[cfg(not(feature = "allow_exhaustive_enum"))]
                 GuildStatus::__Nonexhaustive => unreachable!(),
             }
         }
@@ -1315,6 +1318,7 @@ pub enum GatewayEvent {
     Hello(u64),
     HeartbeatAck,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -1505,6 +1509,7 @@ pub enum Event {
     /// An event type not covered by the above
     Unknown(UnknownEvent),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -1631,6 +1636,7 @@ pub fn deserialize_event_with_type(kind: EventType, v: Value) -> Result<Event> {
             value: v,
             _nonexhaustive: (),
         }),
+        #[cfg(not(feature = "allow_exhaustive_enum"))]
         EventType::__Nonexhaustive => unreachable!(),
     })
 }
@@ -1874,6 +1880,7 @@ pub enum EventType {
     /// library.
     Other(String),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -2051,6 +2058,7 @@ pub enum VoiceEvent {
     /// An unknown voice event not registered.
     Unknown(VoiceOpCode, Value),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 

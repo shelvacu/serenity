@@ -60,6 +60,7 @@ macro_rules! format_command_name {
             HelpBehaviour::Strike => format!("~~`{}`~~", $command_name),
             HelpBehaviour::Nothing => format!("`{}`", $command_name),
             HelpBehaviour::Hide => continue,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             HelpBehaviour::__Nonexhaustive => unreachable!(),
         }
     };
@@ -165,6 +166,7 @@ pub enum CustomisedHelpData<'a> {
     /// To display failure in finding a fitting command.
     NoCommandFound { help_error_message: &'a str },
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -1210,6 +1212,7 @@ pub fn with_embeds(
             &command,
             help_options.embed_success_colour,
         ),
+        #[cfg(not(feature = "allow_exhaustive_enum"))]
         CustomisedHelpData::__Nonexhaustive => unreachable!(),
     } {
         warn_about_failed_send!(&formatted_help, why);
@@ -1373,6 +1376,7 @@ pub fn plain(
         CustomisedHelpData::SingleCommand { ref command } => {
             single_command_to_plain_string(&help_options, &command)
         },
+        #[cfg(not(feature = "allow_exhaustive_enum"))]
         CustomisedHelpData::__Nonexhaustive => unreachable!(),
     };
 

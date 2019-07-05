@@ -31,6 +31,7 @@ pub enum Error {
     /// error.
     Shutdown,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -44,6 +45,7 @@ impl StdError for Error {
             Error::InvalidToken => "The provided token was invalid",
             Error::ShardBootFailure => "Failed to (re-)boot a shard",
             Error::Shutdown => "The clients shards shutdown",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Error::__Nonexhaustive => unreachable!(),
         }
     }

@@ -51,6 +51,7 @@ pub enum Error {
     /// Failed to reconnect after a number of attempts.
     ReconnectFailure,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -75,6 +76,7 @@ impl StdError for Error {
             NoSessionId => "No Session Id present when required",
             OverloadedShard => "Shard has too many guilds",
             ReconnectFailure => "Failed to Reconnect",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             __Nonexhaustive => unreachable!(),
         }
     }

@@ -341,6 +341,7 @@ pub enum ActivityType {
     /// An indicator that the user is listening to something.
     Listening = 2,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -360,6 +361,7 @@ impl ActivityType {
             Playing => 0,
             Streaming => 1,
             Listening => 2,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             __Nonexhaustive => unreachable!(),
         }
     }

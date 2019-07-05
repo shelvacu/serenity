@@ -192,9 +192,11 @@ impl<H: EventHandler + Send + Sync + 'static,
             ShardAction::Reconnect(ReconnectType::Resume) => {
                 self.shard.resume()
             },
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ShardAction::Reconnect(ReconnectType::__Nonexhaustive) => unreachable!(),
             ShardAction::Heartbeat => self.shard.heartbeat(),
             ShardAction::Identify => self.shard.identify(),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ShardAction::__Nonexhaustive => unreachable!(),
         }
     }
@@ -323,6 +325,7 @@ impl<H: EventHandler + Send + Sync + 'static,
                 // Value must be forwarded over the websocket
                 self.shard.client.send_json(&value).is_ok()
             },
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             InterMessage::__Nonexhaustive => unreachable!(),
         }
     }
@@ -437,6 +440,7 @@ impl<H: EventHandler + Send + Sync + 'static,
                             return (None, None, None, false);
                         }
                     },
+                    #[cfg(not(feature = "allow_exhaustive_enum"))]
                     ReconnectType::__Nonexhaustive => unreachable!(),
                 }
 

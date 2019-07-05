@@ -7,6 +7,7 @@ pub enum PremiumTier {
     Tier2,
     Tier3,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -16,6 +17,7 @@ enum_number!(
         Tier1,
         Tier2,
         Tier3,
+        #[cfg(not(feature = "allow_exhaustive_enum"))]
         __Nonexhaustive,
     }
 );
@@ -27,6 +29,7 @@ impl PremiumTier {
             PremiumTier::Tier1 => 1,
             PremiumTier::Tier2 => 2,
             PremiumTier::Tier3 => 3,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             PremiumTier::__Nonexhaustive => unreachable!(),
         }
     }

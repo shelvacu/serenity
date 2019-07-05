@@ -64,6 +64,7 @@ pub(crate) enum DispatchEvent {
     Client(ClientEvent),
     Model(Event),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -313,6 +314,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
                         event_handler.category_create(context, channel);
                     });
                 },
+                #[cfg(not(feature = "allow_exhaustive_enum"))]
                 Channel::__Nonexhaustive => unreachable!(),
             }
         },
@@ -335,6 +337,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
                         event_handler.category_delete(context, channel);
                     });
                 },
+                #[cfg(not(feature = "allow_exhaustive_enum"))]
                 Channel::__Nonexhaustive => unreachable!(),
             }
         },
@@ -709,7 +712,9 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
                 event_handler.webhook_update(context, event.guild_id, event.channel_id);
             });
         },
+        #[cfg(not(feature = "allow_exhaustive_enum"))]
         DispatchEvent::Model(Event::__Nonexhaustive) => unreachable!(),
+        #[cfg(not(feature = "allow_exhaustive_enum"))]
         DispatchEvent::__Nonexhaustive => unreachable!(),
     }
 }

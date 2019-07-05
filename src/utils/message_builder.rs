@@ -981,6 +981,7 @@ pub enum ContentModifier {
     Underline,
     Spoiler,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -1068,6 +1069,7 @@ impl Content {
             ContentModifier::Spoiler => {
                 self.spoiler = true;
             },
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ContentModifier::__Nonexhaustive => unreachable!(),
         }
     }

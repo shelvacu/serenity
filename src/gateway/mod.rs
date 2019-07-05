@@ -115,6 +115,7 @@ pub enum ConnectionStage {
     /// [`Shard`]: struct.Shard.html
     Resuming,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -158,6 +159,7 @@ impl ConnectionStage {
         match self {
             Connecting | Handshake | Identifying | Resuming => true,
             Connected | Disconnected => false,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             __Nonexhaustive => unreachable!(),
         }
     }
@@ -174,6 +176,7 @@ impl Display for ConnectionStage {
             Handshake => "handshaking",
             Identifying => "identifying",
             Resuming => "resuming",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             __Nonexhaustive => unreachable!(),
         })
     }
@@ -190,6 +193,7 @@ pub enum InterMessage {
     Client(Box<ShardClientMessage>),
     Json(Value),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -198,6 +202,7 @@ pub enum ShardAction {
     Identify,
     Reconnect(ReconnectType),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -208,5 +213,6 @@ pub enum ReconnectType {
     /// Indicator that a new connection should be made by sending a RESUME.
     Resume,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }

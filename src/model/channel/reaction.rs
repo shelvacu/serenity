@@ -214,6 +214,7 @@ pub enum ReactionType {
     /// A reaction with a twemoji.
     Unicode(String),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -308,6 +309,7 @@ impl Serialize for ReactionType {
 
                 map.end()
             },
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ReactionType::__Nonexhaustive => unreachable!(),
         }
     }
@@ -329,6 +331,7 @@ impl ReactionType {
                 ..
             } => format!("{}:{}", name.as_ref().map_or("", |s| s.as_str()), id),
             ReactionType::Unicode(ref unicode) => unicode.clone(),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ReactionType::__Nonexhaustive => unreachable!(),
         }
     }
@@ -468,6 +471,7 @@ impl Display for ReactionType {
                 f.write_char('>')
             },
             ReactionType::Unicode(ref unicode) => f.write_str(unicode),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             ReactionType::__Nonexhaustive => unreachable!(),
         }
     }

@@ -91,6 +91,7 @@ pub enum OpCode {
     /// Sent immediately following a client heartbeat that was received.
     HeartbeatAck = 11,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -126,6 +127,7 @@ impl OpCode {
             OpCode::InvalidSession => 9,
             OpCode::Hello => 10,
             OpCode::HeartbeatAck => 11,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             OpCode::__Nonexhaustive => unreachable!(),
         }
     }
@@ -159,6 +161,7 @@ pub enum VoiceOpCode {
     /// Message indicating that another user has disconnected from the voice channel.
     ClientDisconnect = 13,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -194,6 +197,7 @@ impl VoiceOpCode {
             VoiceOpCode::Resumed => 9,
             VoiceOpCode::ClientConnect => 12,
             VoiceOpCode::ClientDisconnect => 13,
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             VoiceOpCode::__Nonexhaustive => unreachable!(),
         }
     }

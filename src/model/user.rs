@@ -370,6 +370,7 @@ pub enum DefaultAvatar {
     #[serde(rename = "1cbd08c76f8af6dddce02c5138971129")]
     Red,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -395,6 +396,7 @@ pub enum OnlineStatus {
     #[serde(rename = "offline")] Offline,
     #[serde(rename = "online")] Online,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -406,6 +408,7 @@ impl OnlineStatus {
             OnlineStatus::Invisible => "invisible",
             OnlineStatus::Offline => "offline",
             OnlineStatus::Online => "online",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             OnlineStatus::__Nonexhaustive => unreachable!(),
         }
     }
@@ -710,6 +713,7 @@ impl User {
                     Err(Error::Model(ModelError::ItemMissing))
                 }
             },
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             GuildContainer::__Nonexhaustive => unreachable!(),
         }
     }

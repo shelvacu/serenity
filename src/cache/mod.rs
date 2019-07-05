@@ -887,6 +887,7 @@ impl Cache {
                 .categories
                 .insert(category.read().id, Arc::clone(category))
                 .map(Channel::Category),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         }
     }

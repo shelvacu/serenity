@@ -13,6 +13,7 @@ pub enum Error<E> {
     /// Parsing operation failed. Contains how it did.
     Parse(E),
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -29,6 +30,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
         match *self {
             Eos => write!(f, "ArgError(\"end of string\")"),
             Parse(ref e) => write!(f, "ArgError(\"{}\")", e),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             __Nonexhaustive => unreachable!(),
         }
     }
@@ -39,6 +41,7 @@ impl<E: fmt::Debug + fmt::Display> StdError for Error<E> {
         match self {
             Error::Eos => "end-of-string",
             Error::Parse(_) => "parse-failure",
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Error::__Nonexhaustive => unreachable!(),
         }
     }

@@ -9,6 +9,7 @@ pub enum Prefix<'a> {
     Mention(&'a str),
     None,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 

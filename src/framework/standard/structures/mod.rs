@@ -22,6 +22,7 @@ pub enum OnlyIn {
     Guild,
     None,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
@@ -152,6 +153,7 @@ pub enum HelpBehaviour {
     /// Does not list a command in the help-menu.
     Hide,
     #[doc(hidden)]
+    #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
