@@ -3,8 +3,6 @@
 All notable changes to this project will be documented in this file.
 This project mostly adheres to [Semantic Versioning][semver].
 
-<<<<<<< HEAD
-=======
 ## [0.6.2] - 2019-6-30
 
 A small release to address a severe deserialization bug.
@@ -499,7 +497,6 @@ It's no ready yet, but we hope that on its release that it will clear misunderst
 - [client] Remove deprecated `Context::edit_profile` ([@zeyla]) [c:bc0d82e]
 - [misc.] Remove everything marked `deprecated` since `v0.5.x` or older ([@Lakelezz]) [c:70720ae]
 
->>>>>>> 595afbc24a4b742ac8e7ce6d179569d746e434e4
 ## [0.5.14] - 2019-5-17
 
 This release fixes a few bugs.
@@ -3036,15 +3033,12 @@ rest::get_guilds(GuildPagination::After(GuildId(777)), 50);
 
 Initial commit.
 
-<<<<<<< HEAD
-=======
 [0.6.2]: https://github.com/serenity-rs/serenity/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/serenity-rs/serenity/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/serenity-rs/serenity/compare/v0.6.0-rc.2...v0.6.0
 [0.6.0-rc.2]: https://github.com/serenity-rs/serenity/compare/v0.6.0-rc.0...v0.6.0-rc.2
 [0.6.0-rc.1]: https://github.com/serenity-rs/serenity/compare/v0.6.0-rc.0...v0.6.0-rc.1
 [0.6.0-rc.0]: https://github.com/serenity-rs/serenity/compare/v0.5.14...v0.6.0-rc.0
->>>>>>> 595afbc24a4b742ac8e7ce6d179569d746e434e4
 [0.5.14]: https://github.com/serenity-rs/serenity/compare/v0.5.13...v0.5.14
 [0.5.13]: https://github.com/serenity-rs/serenity/compare/v0.5.12...v0.5.13
 [0.5.12]: https://github.com/serenity-rs/serenity/compare/v0.5.11...v0.5.12
@@ -3154,8 +3148,6 @@ Initial commit.
 [@xSke]: https://github.com/xSke
 [@zeyla]: https://github.com/zeyla
 
-<<<<<<< HEAD
-=======
 [c:17f1dc2]: https://github.com/serenity-rs/serenity/commit/17f1dc214f95be129d0ade54ebe8e4e7ab93fbdc
 [c:13595ff]: https://github.com/serenity-rs/serenity/commit/13595ff25d35fcaf9bd69f7fe8d75c67f72e676e
 [c:e628614]: https://github.com/serenity-rs/serenity/commit/e62861464d96d42a150cce1678cd4afdbea6f121
@@ -3296,7 +3288,6 @@ Initial commit.
 [c:bc0d82e]: https://github.com/serenity-rs/serenity/commit/bc0d82eb73f1d5c277dbe9865540b7a623d373b2
 [c:70720ae]: https://github.com/serenity-rs/serenity/commit/70720aeeee44d67a4cb2d58a0c375a54c9be95a2
 
->>>>>>> 595afbc24a4b742ac8e7ce6d179569d746e434e4
 [c:f648d90]: https://github.com/serenity-rs/serenity/commit/f648d9093f87354bbec03228fa647f6dd9afb03a
 [c:33f4adf]: https://github.com/serenity-rs/serenity/commit/33f4adfe0f6303ac6b39e8c3db6f413e2289c81b
 [c:1705338]: https://github.com/serenity-rs/serenity/commit/17053381b1481e753abdcd319143ddd63467605d

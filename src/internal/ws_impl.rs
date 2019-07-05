@@ -53,7 +53,7 @@ impl SenderExt for WsClient {
 }
 
 #[inline]
-fn convert_ws_message(message: Option<Message>) -> Option<WsEvent, Result<Value>>{
+fn convert_ws_message(message: Option<Message>) -> Option<(WsEvent, Result<Value>)>{
     match message {
         None => None,
         Some(msg) => {
@@ -69,7 +69,9 @@ fn convert_ws_message(message: Option<Message>) -> Option<WsEvent, Result<Value>
                 }
             }
             #[cfg(not(feature = "raw-ws-event"))]
-            raw_event = RawEvent;
+            {
+                raw_event = WsEvent;
+            }
 
             match convert_ws_message_inner(msg).transpose() {
                 None => None,

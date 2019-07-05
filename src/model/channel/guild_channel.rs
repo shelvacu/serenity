@@ -488,12 +488,12 @@ impl GuildChannel {
     ///
     /// impl EventHandler for Handler {
     ///     fn message(&self, context: Context, msg: Message) {
-    ///         let channel = match context.cache.read().guild_channel(msg.channel_id) {
+    ///         let channel = match context.get_cache().read().guild_channel(msg.channel_id) {
     ///             Some(channel) => channel,
     ///             None => return,
     ///         };
     ///
-    ///         let permissions = channel.read().permissions_for(&context.cache, &msg.author).unwrap();
+    ///         let permissions = channel.read().permissions_for(&context, &msg.author).unwrap();
     ///
     ///         println!("The user's permissions: {:?}", permissions);
     ///     }
@@ -517,14 +517,14 @@ impl GuildChannel {
     ///
     /// impl EventHandler for Handler {
     ///     fn message(&self, context: Context, mut msg: Message) {
-    ///         let channel = match context.cache.read().guild_channel(msg.channel_id) {
+    ///         let channel = match context.get_cache().read().guild_channel(msg.channel_id) {
     ///             Some(channel) => channel,
     ///             None => return,
     ///         };
     ///
-    ///         let current_user_id = context.cache.read().user.id;
+    ///         let current_user_id = context.get_cache().read().user.id;
     ///         let permissions =
-    ///             channel.read().permissions_for(&context.cache, current_user_id).unwrap();
+    ///             channel.read().permissions_for(&context, current_user_id).unwrap();
     ///
     ///             if !permissions.contains(Permissions::ATTACH_FILES | Permissions::SEND_MESSAGES) {
     ///                 return;
@@ -539,7 +539,7 @@ impl GuildChannel {
     ///                 },
     ///             };
     ///
-    ///         let _ = msg.channel_id.send_files(&context.http, vec![(&file, "cat.png")], |mut m| {
+    ///         let _ = msg.channel_id.send_files(&context, vec![(&file, "cat.png")], |mut m| {
     ///             m.content("here's a cat");
     ///
     ///             m

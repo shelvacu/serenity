@@ -1,7 +1,7 @@
 use crate::gateway::InterMessage;
 use crate::model::{
     channel::{Channel, Message},
-    event::{Event, RawEvent},
+    event::{Event, WsEvent},
     guild::Member,
 };
 use std::{sync::{Arc, mpsc::Sender}};
@@ -14,14 +14,8 @@ use super::{
 use threadpool::ThreadPool;
 use typemap::ShareMap;
 
-#[cfg(feature = "http")]
-use crate::http::Http;
 #[cfg(feature = "framework")]
 use crate::framework::Framework;
-#[cfg(feature = "cache")]
-use crate::model::id::GuildId;
-#[cfg(feature = "cache")]
-use crate::cache::Cache;
 #[cfg(any(feature = "cache", feature = "http"))]
 use crate::CacheAndHttp;
 #[cfg(feature = "cache")]
@@ -110,6 +104,7 @@ pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static,
                 other => {
                     handle_event(
                         other,
+                        ws_event,
                         data,
                         h,
                         runner_tx,
@@ -133,7 +128,7 @@ pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static,
         (Some(_), Some(_)) => {
             if let DispatchEvent::Model(ref e) = event {
                 dispatch(DispatchEvent::Model(e.clone()),
-                         ws_event,
+                         ws_event.clone(),
                          framework,
                          data,
                          &None::<Arc<H>>,
@@ -189,7 +184,7 @@ pub(crate) fn dispatch<H: EventHandler + Send + Sync + 'static,
                 other => {
                     handle_event(
                         other,
-                        ws_event
+                        ws_event,
                         data,
                         h,
                         runner_tx,
@@ -283,7 +278,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             #[cfg(feature = "raw-ws-event")]
             {
                 let event_handler = Arc::clone(event_handler);
-                let threads_raw_event = raw_event.unwrap();
+                let threads_raw_event = ws_event.unwrap();
 
                 threadpool.execute(move || {
                     event_handler.raw_websocket_packet(context, threads_raw_event);
@@ -382,7 +377,6 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
 
             update(&cache_and_http, &mut event);
 
-            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {
@@ -429,7 +423,7 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
                         .guilds
                         .iter()
                         .map(|(&id, _)| id)
-                        .collect::<Vec<GuildId>>();
+                        .collect::<Vec<_>>();
                     let event_handler = Arc::clone(event_handler);
 
                     threadpool.execute(move || {
@@ -575,7 +569,6 @@ fn handle_event<H: EventHandler + Send + Sync + 'static>(
             
             update(&cache_and_http, &mut event);
 
-            let context = context(data, runner_tx, shard_id, raw_event);
             let event_handler = Arc::clone(event_handler);
 
             threadpool.execute(move || {

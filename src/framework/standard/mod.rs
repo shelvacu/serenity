@@ -277,14 +277,14 @@ impl StandardFramework {
 
         #[cfg(feature = "cache")]
         {
-            if let Some(Channel::Guild(chan)) = msg.channel_id.to_channel_cached(&ctx.cache) {
+            if let Some(Channel::Guild(chan)) = msg.channel_id.to_channel_cached(&ctx) {
                 let guild_id = chan.with(|c| c.guild_id);
 
                 if self.config.blocked_guilds.contains(&guild_id) {
                     return Some(DispatchError::BlockedGuild);
                 }
 
-                if let Some(guild) = guild_id.to_guild_cached(&ctx.cache) {
+                if let Some(guild) = guild_id.to_guild_cached(&ctx) {
                     if self.config.blocked_users.contains(&guild.with(|g| g.owner_id)) {
                         return Some(DispatchError::BlockedGuild);
                     }
@@ -346,14 +346,14 @@ impl StandardFramework {
     /// // For information regarding this macro, learn more about it in its documentation in `command_attr`.
     /// #[command]
     /// fn ping(ctx: &mut Context, msg: &Message) -> CommandResult {
-    ///     msg.channel_id.say(&ctx.http, "pong!")?;
+    ///     msg.channel_id.say(&ctx, "pong!")?;
     ///
     ///     Ok(())
     /// }
     ///
     /// #[command]
     /// fn pong(ctx: &mut Context, msg: &Message) -> CommandResult {
-    ///     msg.channel_id.say(&ctx.http, "ping!")?;
+    ///     msg.channel_id.say(&ctx, "ping!")?;
     ///
     ///     Ok(())
     /// }
@@ -364,7 +364,7 @@ impl StandardFramework {
     ///   commands: [ping, pong],
     /// });
     ///
-    /// # fn main() -> Result<(), Box<StdError>> {
+    /// # fn main() -> Result<(), Box<dyn StdError>> {
     /// #   let mut client = Client::new("token", Handler)?;
     /// client.with_framework(StandardFramework::new()
     ///     // Groups' names are changed to all uppercase, plus appended with `_GROUP`.
@@ -405,12 +405,12 @@ impl StandardFramework {
     ///             NotEnoughArguments { min, given } => {
     ///                 let s = format!("Need {} arguments, but only got {}.", min, given);
     ///
-    ///                 let _ = msg.channel_id.say(&context.http, &s);
+    ///                 let _ = msg.channel_id.say(&context, &s);
     ///             },
     ///             TooManyArguments { max, given } => {
     ///                 let s = format!("Max arguments allowed is {}, but got {}.", max, given);
     ///
-    ///                 let _ = msg.channel_id.say(&context.http, &s);
+    ///                 let _ = msg.channel_id.say(&context, &s);
     ///             },
     ///             _ => println!("Unhandled dispatch error."),
     ///         }

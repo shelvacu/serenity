@@ -229,7 +229,7 @@ impl CreateEmbed {
     /// impl EventHandler for Handler {
     ///     fn message(&self, context: Context, mut msg: Message) {
     ///         if msg.content == "~embed" {
-    ///             let _ = msg.channel_id.send_message(&context.http, |m| {
+    ///             let _ = msg.channel_id.send_message(&context, |m| {
     ///                 m.embed(|e| {
     ///                     e.title("hello").timestamp("2004-06-08T16:04:23")
     ///                 });
@@ -264,7 +264,7 @@ impl CreateEmbed {
     ///
     /// impl EventHandler for Handler {
     ///     fn guild_member_addition(&self, context: Context, guild_id: GuildId, member: Member) {
-    ///         let cache = context.cache.read();
+    ///         let cache = context.get_cache().read();
     ///
     ///         if let Ok(guild) = guild_id.to_partial_guild(&context) {
     ///             let channels = guild.channels(&context)

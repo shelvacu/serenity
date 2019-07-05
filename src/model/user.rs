@@ -504,7 +504,7 @@ impl User {
     /// #   #[cfg(feature = "cache")]
     ///     fn message(&self, ctx: Context, msg: Message) {
     ///         if msg.content == "~help" {
-    ///             let url = match ctx.cache.read().user.invite_url(&ctx, Permissions::empty()) {
+    ///             let url = match ctx.get_cache().read().user.invite_url(&ctx, Permissions::empty()) {
     ///                 Ok(v) => v,
     ///                 Err(why) => {
     ///                     println!("Error creating invite url: {:?}", why);
@@ -760,7 +760,7 @@ impl User {
     ///                 .push(Bold + msg.author.tag())
     ///                 .build();
     ///
-    ///             let _ = msg.channel_id.say(&context.http, &content);
+    ///             let _ = msg.channel_id.say(&context.get_http(), &content);
     ///         }
     ///     }
     /// }

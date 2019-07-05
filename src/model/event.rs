@@ -1126,7 +1126,7 @@ impl CacheUpdate for ReadyEvent {
             }
         }
 
-        for (_, channel) in &ready.private_channels {
+        for channel in ready.private_channels.values() {
             cache.insert_channel(&channel);
         }
 

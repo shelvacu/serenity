@@ -224,7 +224,7 @@ impl<H: EventHandler + Send + Sync + 'static,
     }
 
     #[inline]
-    fn dispatch(&self, raw_event: Option<RawEvent>, event: DispatchEvent) {
+    fn dispatch(&self, raw_event: Option<WsEvent>, event: DispatchEvent) {
         dispatch(
             event,
             raw_event,
@@ -400,8 +400,9 @@ impl<H: EventHandler + Send + Sync + 'static,
     /// Returns a received event, as well as whether reading the potentially
     /// present event was successful.
     fn recv_event(&mut self) -> (Option<WsEvent>, Option<Event>, Option<ShardAction>, bool) {
-        let (raw_event, parsed_event) = match self.shard.client.recv_json() {
+        let (ws_event, parsed_event) = match self.shard.client.recv_json() {
             Ok(Some(res)) => res,
+            Ok(None) => return (None, None, None, true),
             Err(Error::Tungstenite(TungsteniteError::Io(_))) => {
                 // Check that an amount of time at least double the
                 // heartbeat_interval has passed.
@@ -448,27 +449,20 @@ impl<H: EventHandler + Send + Sync + 'static,
             },
         };
         
-        let gw_event = match parsed_event {
-            Ok(Some(value)) => {
-                GatewayEvent::deserialize(value).map(Some).map_err(From::from)
+        let event = match parsed_event {
+            Ok(value) => {
+                GatewayEvent::deserialize(value).map_err(From::from)
             },
-            Ok(None) => Ok(None),
-            Err(why) => Err(why),
-        };
-
-        let event = match gw_event {
-            Ok(Some(event)) => Ok(event),
-            Ok(None) => return (Some(raw_event), None, None, true),
+            //Ok(None) => return (Some(ws_event), None, None, true),
             Err(why) => Err(why),
         };
 
         let action = match self.shard.handle_event(&event) {
-            Ok(Some(action)) => Some(action),
-            Ok(None) => None,
+            Ok(action) => action,
             Err(why) => {
                 error!("Shard handler received err: {:?}", why);
 
-                return (Some(raw_event), None, None, true);
+                return (Some(ws_event), None, None, true);
             },
         };
 
@@ -488,7 +482,7 @@ impl<H: EventHandler + Send + Sync + 'static,
             _ => None,
         };
 
-        (Some(raw_event), event, action, true)
+        (Some(ws_event), event, action, true)
     }
 
     fn request_restart(&self) -> Result<()> {

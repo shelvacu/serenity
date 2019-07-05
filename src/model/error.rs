@@ -25,7 +25,7 @@ use super::Permissions;
 /// # use std::error::Error;
 /// #
 /// # #[cfg(all(feature = "client", feature = "model"))]
-/// # fn try_main() -> Result<(), Box<Error>> {
+/// # fn try_main() -> Result<(), Box<dyn Error>> {
 /// use serenity::prelude::*;
 /// use serenity::model::prelude::*;
 /// use serenity::Error;
@@ -41,7 +41,7 @@ use super::Permissions;
 ///             return;
 ///         }
 ///
-///      match guild_id.ban(&context.http, user, &8) {
+///      match guild_id.ban(&context, user, &8) {
 ///             Ok(()) => {
 ///                 // Ban successful.
 ///             },

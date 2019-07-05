@@ -265,7 +265,7 @@ impl Cache {
     ///         // seconds.
     ///         thread::sleep(Duration::from_secs(5));
     ///
-    ///         println!("{} unknown members", ctx.cache.read().unknown_members());
+    ///         println!("{} unknown members", ctx.get_cache().read().unknown_members());
     ///     }
     /// }
     ///
@@ -347,7 +347,7 @@ impl Cache {
     ///
     /// impl EventHandler for Handler {
     ///     fn ready(&self, context: Context, _: Ready) {
-    ///         let guilds = context.cache.read().guilds.len();
+    ///         let guilds = context.get_cache().read().guilds.len();
     ///
     ///         println!("Guilds in the Cache: {}", guilds);
     ///     }
@@ -465,12 +465,12 @@ impl Cache {
     ///
     /// impl EventHandler for Handler {
     ///     fn message(&self, context: Context, message: Message) {
-    ///         let cache = context.cache.read();
+    ///         let cache = context.get_cache().read();
     ///
     ///         let channel = match cache.guild_channel(message.channel_id) {
     ///             Some(channel) => channel,
     ///             None => {
-    /// if let Err(why) = message.channel_id.say(&context.http, "Could not find guild's
+    /// if let Err(why) = message.channel_id.say(&context, "Could not find guild's
     /// channel data") {
     ///                     println!("Error sending message: {:?}", why);
     ///                 }
@@ -782,7 +782,7 @@ impl Cache {
     /// #
     /// # #[command]
     /// # fn test(context: &mut Context) -> CommandResult {
-    /// if let Some(user) = context.cache.read().user(7) {
+    /// if let Some(user) = context.get_cache().read().user(7) {
     ///     println!("User with Id 7 is currently named {}", user.read().name);
     /// }
     /// # Ok(())
@@ -829,7 +829,7 @@ impl Cache {
     /// If a previous channel existed under the same ID, it is returned,
     /// similar to the behaviour of std::collections::HashMap#insert
     pub fn insert_channel(&mut self, chan: &Channel) -> Option<Channel> {
-        use internal::RwLockExt;
+        use crate::internal::RwLockExt;
         match chan {
             Channel::Group(ref group) => {
                 let group = Arc::clone(group);
@@ -906,7 +906,7 @@ impl Cache {
             member.user = Arc::clone(&user);
         }
 
-        for (_chan_id, guild_channel) in &guild.channels {
+        for guild_channel in guild.channels.values() {
             let gcc = Arc::clone(guild_channel);
             self.insert_channel(&Channel::Guild(gcc));
         }
@@ -915,16 +915,6 @@ impl Cache {
         self
             .guilds
             .insert(guild.id, Arc::new(RwLock::new(guild)));
-    }
-
-
-    /// Gets the duration it will try for when acquiring a write lock.
-    ///
-    /// Refer to the documentation for [`cache_lock_time`] for more information.
-    ///
-    /// [`cache_lock_time`]: struct.Settings.html#method.cache_lock_time
-    pub fn get_try_write_duration(&self) -> Option<Duration> {
-        self.settings.cache_lock_time
     }
 
     pub(crate) fn update_user_entry(&mut self, user: &User) {
@@ -1156,7 +1146,7 @@ mod test {
 
 /// A neworphantype to allow implementing `AsRef<CacheRwLock>`
 /// for the automatically dereferenced underlying type.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CacheRwLock(Arc<RwLock<Cache>>);
 
 impl From<Arc<RwLock<Cache>>> for CacheRwLock {

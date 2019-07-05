@@ -25,7 +25,7 @@ pub trait EventHandler {
     ///
     /// Provides the raw contents of the websocket packet (may be compressed).
     #[cfg(feature = "raw-ws-event")]
-    fn raw_websocket_packet(&self, _ctx: Context, _packet: RawEvent) {}
+    fn raw_websocket_packet(&self, _ctx: Context, _packet: WsEvent) {}
 
     /// Dispatched when a channel is created.
     ///

@@ -352,7 +352,7 @@ impl From<char> for ReactionType {
     /// # #[cfg(all(feature = "client", feature = "framework", feature = "http"))]
     /// # #[command]
     /// # fn example(ctx: &mut Context) -> CommandResult {
-    /// #   let message = ChannelId(0).message(&ctx.http, 0)?;
+    /// #   let message = ChannelId(0).message(&ctx, 0)?;
     /// #
     /// message.react(ctx, '🍎')?;
     /// # Ok(())

@@ -574,7 +574,7 @@ fn fill_eligible_commands<'a>(
                     &group.options,
                     owners,
                     help_options,
-                    &context.cache,
+                    &context.get_cache(),
                 )
             )
         }
@@ -602,7 +602,7 @@ fn fill_eligible_commands<'a>(
             &command.options,
             owners,
             help_options,
-            &context.cache,
+            &context.get_cache(),
         );
 
         let name = format_command_name!(command_behaviour, &name);
@@ -807,7 +807,7 @@ pub fn create_customised_help_data<'a>(
     help_options: &'a HelpOptions,
     msg: &Message,
 ) -> CustomisedHelpData<'a> {
-    let cache = &context.cache;
+    let cache = &context.get_cache();
 
     if !args.is_empty() {
         let name = args.message();
@@ -1178,7 +1178,7 @@ pub fn with_embeds(
             ref help_description,
             ref suggestions,
         } => send_suggestion_embed(
-            &context.http,
+            &context.get_http(),
             msg.channel_id,
             &help_description,
             &suggestions,
@@ -1187,7 +1187,7 @@ pub fn with_embeds(
         CustomisedHelpData::NoCommandFound {
             ref help_error_message,
         } => send_error_embed(
-            &context.http,
+            &context.get_http(),
             msg.channel_id,
             help_error_message,
             help_options.embed_error_colour,
@@ -1196,7 +1196,7 @@ pub fn with_embeds(
             ref help_description,
             ref groups,
         } => send_grouped_commands_embed(
-            &context.http,
+            &context.get_http(),
             &help_options,
             msg.channel_id,
             &help_description,
@@ -1204,7 +1204,7 @@ pub fn with_embeds(
             help_options.embed_success_colour,
         ),
         CustomisedHelpData::SingleCommand { ref command } => send_single_command_embed(
-            &context.http,
+            &context.get_http(),
             &help_options,
             msg.channel_id,
             &command,
@@ -1376,7 +1376,7 @@ pub fn plain(
         CustomisedHelpData::__Nonexhaustive => unreachable!(),
     };
 
-    if let Err(why) = msg.channel_id.say(&context.http, result) {
+    if let Err(why) = msg.channel_id.say(&context.get_http(), result) {
         warn_about_failed_send!(&formatted_help, why);
     };
 

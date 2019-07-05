@@ -371,7 +371,7 @@ impl Client {
 
         let cache_and_http = Arc::new(CacheAndHttp {
             #[cfg(feature = "cache")]
-            cache: Arc::new(RwLock::new(Cache::default())),
+            cache: CacheRwLock::default(),
             #[cfg(feature = "cache")]
             update_cache_timeout: None,
             #[cfg(feature = "http")]
@@ -473,7 +473,7 @@ impl Client {
         )));
 
         let cache_and_http = Arc::new(CacheAndHttp {
-            cache: Arc::new(RwLock::new(Cache::default())),
+            cache: CacheRwLock::default(),
             update_cache_timeout: duration,
             #[cfg(feature = "http")]
             http: Arc::new(http),
@@ -540,7 +540,7 @@ impl Client {
     ///
     /// #[command]
     /// fn ping(ctx: &mut Context, msg: &Message) -> CommandResult {
-    ///     msg.channel_id.say(&ctx.http, "Pong!")?;
+    ///     msg.channel_id.say(&ctx, "Pong!")?;
     ///     Ok(())
     /// }
     ///
@@ -551,7 +551,7 @@ impl Client {
     ///     commands: [ping],
     /// });
     /// #
-    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// # fn try_main() -> Result<(), Box<dyn Error>> {
     ///
     /// let mut client = Client::new(&env::var("DISCORD_TOKEN")?, Handler)?;
     /// client.with_framework(StandardFramework::new()

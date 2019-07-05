@@ -1,4 +1,5 @@
 use crate::client::bridge::gateway::ShardMessenger;
+use crate::CacheAndHttp;
 use crate::gateway::InterMessage;
 use crate::model::prelude::*;
 use parking_lot::RwLock;
@@ -321,16 +322,26 @@ impl Context {
     pub fn set_presence(&self, activity: Option<Activity>, status: OnlineStatus) {
         self.shard.set_presence(activity, status);
     }
+
+    #[cfg(feature = "http")]
+    pub fn get_http(&self) -> &Arc<Http> {
+        &self.cache_and_http.http
+    }
+
+    #[cfg(feature = "cache")]
+    pub fn get_cache(&self) -> &CacheRwLock {
+        &self.cache_and_http.cache
+    }
 }
 
 #[cfg(feature = "http")]
 impl AsRef<Http> for Context {
-    fn as_ref(&self) -> &Http { &self.http }
+    fn as_ref(&self) -> &Http { self.cache_and_http.http.as_ref() }
 }
 
 #[cfg(feature = "cache")]
 impl AsRef<CacheRwLock> for Context {
     fn as_ref(&self) -> &CacheRwLock {
-        &self.cache
+        &self.cache_and_http.cache
     }
 }

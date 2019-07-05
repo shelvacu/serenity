@@ -150,13 +150,10 @@ native_tls_backend = ["reqwest/default-tls", "tungstenite/tls"]
 model = ["builder", "http"]
 standard_framework = ["framework", "uwl", "command_attr"]
 utils = ["base64"]
-<<<<<<< HEAD
-voice = ["byteorder", "gateway", "opus", "sodiumoxide"]
-websocket = ["evzht9h3nznqzwl"]
-raw-ws-event = ["websocket"]
-=======
 voice = ["byteorder", "gateway", "audiopus", "rand", "sodiumoxide"]
->>>>>>> 595afbc24a4b742ac8e7ce6d179569d746e434e4
+raw-ws-event = ["tungstenite"]
+allow_exhaustive_enum = []
+
 
 [package.metadata.docs.rs]
 all-features = true

@@ -270,7 +270,7 @@ impl Configuration {
     ///
     /// #[command]
     /// fn ping(ctx: &mut Context, msg: &Message) -> CommandResult {
-    ///     msg.channel_id.say(&ctx.http, "Pong!")?;
+    ///     msg.channel_id.say(&ctx, "Pong!")?;
     ///     Ok(())
     /// }
     ///
