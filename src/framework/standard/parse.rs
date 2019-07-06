@@ -147,10 +147,14 @@ impl<'msg, 'groups, 'config, 'ctx> CommandParser<'msg, 'groups, 'config, 'ctx> {
 
                 let perms = guild.permissions_in(self.msg.channel_id, self.msg.author.id);
 
-                if !perms.contains(*options.required_permissions()) &&
-                    !(options.owner_privilege() &&
-                        self.config.owners.contains(&self.msg.author.id)) {
-                    return Err(DispatchError::LackingPermissions(*options.required_permissions()));
+                //Clippy's suggestion is much harder to read IMO
+                #[allow(clippy::nonminimal_bool)]
+                {
+                    if !perms.contains(*options.required_permissions()) &&
+                        !(options.owner_privilege() &&
+                          self.config.owners.contains(&self.msg.author.id)) {
+                            return Err(DispatchError::LackingPermissions(*options.required_permissions()));
+                    }
                 }
 
                 if let Some(member) = guild.members.get(&self.msg.author.id) {
