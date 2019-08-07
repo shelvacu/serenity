@@ -536,3 +536,32 @@ impl PartialGuild {
         self.roles.values().find(|role| role_name == role.name)
     }
 }
+
+impl From<Guild> for PartialGuild {
+    fn from(g: Guild) -> Self {
+        Self {
+            id: g.id,
+            afk_channel_id: g.afk_channel_id,
+            afk_timeout: g.afk_timeout,
+            default_message_notifications: g.default_message_notifications,
+            embed_channel_id: None,
+            embed_enabled: false,
+            emojis: g.emojis,
+            features: g.features,
+            icon: g.icon,
+            mfa_level: g.mfa_level,
+            name: g.name,
+            owner_id: g.owner_id,
+            region: g.region,
+            roles: g.roles,
+            splash: g.splash,
+            verification_level: g.verification_level,
+            description: g.description,
+            premium_tier: g.premium_tier,
+            premium_subscription_count: g.premium_subscription_count,
+            banner: g.banner,
+            vanity_url_code: g.vanity_url_code,
+            _nonexhaustive: (),
+        }
+    }
+}

@@ -292,6 +292,13 @@ impl Guild {
         self.id.ban(cache_http.http(), user, options)
     }
 
+    /// Returns the formatted URL of the guild's icon, if one exists.
+    pub fn banner_url(&self) -> Option<String> {
+        self.banner
+            .as_ref()
+            .map(|banner| format!(cdn!("/banners/{}/{}.webp"), self.id, banner))
+    }
+
     /// Retrieves a list of [`Ban`]s for the guild.
     ///
     /// **Note**: Requires the [Ban Members] permission.

@@ -854,7 +854,7 @@ pub struct MessageUpdateEvent {
     pub mentions: Option<Vec<User>>,
     pub mention_roles: Option<Vec<RoleId>>,
     pub attachments: Option<Vec<Attachment>>,
-    pub embeds: Option<Vec<Value>>,
+    pub embeds: Option<Vec<Embed>>,
     #[serde(skip)]
     pub(crate) _nonexhaustive: (),
 }
