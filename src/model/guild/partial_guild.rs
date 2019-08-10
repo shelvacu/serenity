@@ -84,6 +84,13 @@ impl PartialGuild {
         self.id.ban(&http, user, &delete_message_days)
     }
 
+    /// Returns a formatted URL of the guild's icon, if the guild has an icon.
+    pub fn banner_url(&self) -> Option<String> {
+        self.banner
+            .as_ref()
+            .map(|banner| format!(cdn!("/banners/{}/{}.webp"), self.id, banner))
+    }
+
     /// Gets a list of the guild's bans.
     ///
     /// Requires the [Ban Members] permission.
