@@ -1,10 +1,12 @@
-use crate::util::*;
-use crate::OnlyIn;
 use proc_macro2::Span;
-use std::fmt;
 use syn::parse::{Error, Result};
 use syn::spanned::Spanned;
-use syn::{Attribute, Ident, Lit, LitStr, Meta, MetaList, MetaNameValue, NestedMeta};
+use syn::{Attribute, Ident, Lit, LitStr, Meta, NestedMeta, Path};
+
+use crate::structures::{Checks, Colour, HelpBehaviour, OnlyIn, Permissions};
+use crate::util::LitExt;
+
+use std::fmt::{self, Write};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ValueKind {
@@ -14,7 +16,7 @@ pub enum ValueKind {
     // #[<name> = <value>]
     Equals,
 
-    // #[<name>([<value>, ...])]
+    // #[<name>([<value>, <value>, <value>, ...])]
     List,
 
     // #[<name>(<value>)]
@@ -22,14 +24,39 @@ pub enum ValueKind {
 }
 
 impl fmt::Display for ValueKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ValueKind::Name => f.pad("`#[<name>]`"),
             ValueKind::Equals => f.pad("`#[<name> = <value>]`"),
-            ValueKind::List => f.pad("`#[<name>([<value>, ...])]`"),
+            ValueKind::List => f.pad("`#[<name>([<value>, <value>, <value>, ...])]`"),
             ValueKind::SingleList => f.pad("`#[<name>(<value>)]`"),
         }
     }
+}
+
+fn to_ident(p: Path) -> Result<Ident> {
+    if p.segments.is_empty() {
+        return Err(Error::new(
+            p.span(),
+            "cannot convert an empty path to an identifier",
+        ));
+    }
+
+    if p.segments.len() > 1 {
+        return Err(Error::new(
+            p.span(),
+            "the path must not have more than one segment",
+        ));
+    }
+
+    if !p.segments[0].arguments.is_empty() {
+        return Err(Error::new(
+            p.span(),
+            "the singular path segment must not have any arguments",
+        ));
+    }
+
+    Ok(p.segments[0].ident.clone())
 }
 
 #[derive(Debug)]
@@ -37,15 +64,17 @@ pub struct Values {
     pub name: Ident,
     pub literals: Vec<Lit>,
     pub kind: ValueKind,
+    pub span: Span,
 }
 
 impl Values {
     #[inline]
-    pub fn new(name: Ident, kind: ValueKind, literals: Vec<Lit>) -> Self {
+    pub fn new(name: Ident, kind: ValueKind, literals: Vec<Lit>, span: Span) -> Self {
         Values {
             name,
             literals,
             kind,
+            span,
         }
     }
 }
@@ -54,26 +83,31 @@ pub fn parse_values(attr: &Attribute) -> Result<Values> {
     let meta = attr.parse_meta()?;
 
     match meta {
-        Meta::Word(name) => Ok(Values::new(name, ValueKind::Name, Vec::new())),
-        Meta::List(MetaList {
-            ident: name,
-            paren_token: _,
-            nested,
-        }) => {
-            let mut lits = Vec::new();
+        Meta::Path(path) => {
+            let name = to_ident(path)?;
+
+            Ok(Values::new(name, ValueKind::Name, Vec::new(), attr.span()))
+        }
+        Meta::List(meta) => {
+            let name = to_ident(meta.path)?;
+            let nested = meta.nested;
 
             if nested.is_empty() {
                 return Err(Error::new(attr.span(), "list cannot be empty"));
             }
 
+            let mut lits = Vec::with_capacity(nested.len());
+
             for meta in nested {
                 match meta {
-                    NestedMeta::Literal(l) => lits.push(l),
+                    NestedMeta::Lit(l) => lits.push(l),
                     NestedMeta::Meta(m) => match m {
-                        Meta::Word(w) => lits.push(Lit::Str(LitStr::new(&w.to_string(), w.span()))),
-                        Meta::List(_) => return Err(Error::new(attr.span(), "cannot nest a list")),
-                        Meta::NameValue(_) => {
-                            return Err(Error::new(attr.span(), "cannot nest a name-value pair"));
+                        Meta::Path(path) => {
+                            let i = to_ident(path)?;
+                            lits.push(Lit::Str(LitStr::new(&i.to_string(), i.span())))
+                        }
+                        Meta::List(_) | Meta::NameValue(_) => {
+                            return Err(Error::new(attr.span(), "cannot nest a list; only accept literals and identifiers at this level"))
                         }
                     },
                 }
@@ -85,26 +119,32 @@ pub fn parse_values(attr: &Attribute) -> Result<Values> {
                 ValueKind::List
             };
 
-            Ok(Values::new(name, kind, lits))
+            Ok(Values::new(name, kind, lits, attr.span()))
         }
-        Meta::NameValue(MetaNameValue {
-            ident: name,
-            eq_token: _,
-            lit,
-        }) => Ok(Values::new(name, ValueKind::Equals, vec![lit])),
+        Meta::NameValue(meta) => {
+            let name = to_ident(meta.path)?;
+            let lit = meta.lit;
+
+            Ok(Values::new(name, ValueKind::Equals, vec![lit], attr.span()))
+        }
     }
 }
 
-struct DisplaySlice<'a, T: 'a>(&'a [T]);
+#[derive(Debug, Clone)]
+struct DisplaySlice<'a, T>(&'a [T]);
 
 impl<'a, T: fmt::Display> fmt::Display for DisplaySlice<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.0.len() {
-            0 => f.write_str("nothing")?,
-            1 => write!(f, "{}", (self.0)[0])?,
-            _ => {
-                for (idx, item) in self.0.iter().enumerate() {
-                    writeln!(f, "{}: {}", idx, item)?;
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut iter = self.0.iter().enumerate();
+
+        match iter.next() {
+            None => f.write_str("nothing")?,
+            Some((idx, elem)) => {
+                write!(f, "{}: {}", idx, elem)?;
+
+                for (idx, elem) in iter {
+                    f.write_char('\n')?;
+                    write!(f, "{}: {}", idx, elem)?;
                 }
             }
         }
@@ -113,118 +153,154 @@ impl<'a, T: fmt::Display> fmt::Display for DisplaySlice<'a, T> {
     }
 }
 
-pub trait AttributeOption: Sized {
-    const FORMS: &'static [ValueKind];
+#[inline]
+fn is_form_acceptable(expect: &[ValueKind], kind: ValueKind) -> bool {
+    if expect.contains(&ValueKind::List) && kind == ValueKind::SingleList {
+        true
+    } else {
+        expect.contains(&kind)
+    }
+}
 
-    fn validate(vals: &Values, name: &str) {
-        assert_eq!(vals.name, name, "expected attribute name to be {:?}", name);
-
-        let is_accepted =
-            if Self::FORMS.contains(&ValueKind::List) && vals.kind == ValueKind::SingleList {
-                true
-            } else {
-                Self::FORMS.contains(&vals.kind)
-            };
-
-        assert!(
-            is_accepted,
-            "expected attribute {:?} to be in one of the forms \n{}",
-            name,
-            DisplaySlice(Self::FORMS)
-        );
+#[inline]
+fn validate(values: &Values, forms: &[ValueKind]) -> Result<()> {
+    if !is_form_acceptable(forms, values.kind) {
+        return Err(Error::new(
+            values.span,
+            // Using the `_args` version here to avoid an allocation.
+            format_args!(
+                "the attribute must be in of these forms:\n{}",
+                DisplaySlice(forms)
+            ),
+        ));
     }
 
-    fn parse(&mut self, name: &str, vals: Values);
+    Ok(())
+}
+
+#[inline]
+pub fn parse<T: AttributeOption>(values: Values) -> Result<T> {
+    T::parse(values)
+}
+
+pub trait AttributeOption: Sized {
+    fn parse(values: Values) -> Result<Self>;
 }
 
 impl AttributeOption for Vec<String> {
-    const FORMS: &'static [ValueKind] = &[ValueKind::List];
+    fn parse(values: Values) -> Result<Self> {
+        validate(&values, &[ValueKind::List])?;
 
-    fn parse(&mut self, name: &str, vals: Values) {
-        Self::validate(&vals, name);
-
-        let res = vals.literals.into_iter().map(|lit| lit.to_str()).collect();
-
-        *self = res;
+        Ok(values
+            .literals
+            .into_iter()
+            .map(|lit| lit.to_str())
+            .collect())
     }
 }
 
 impl AttributeOption for String {
-    const FORMS: &'static [ValueKind] = &[ValueKind::Equals, ValueKind::SingleList];
+    #[inline]
+    fn parse(values: Values) -> Result<Self> {
+        validate(&values, &[ValueKind::Equals, ValueKind::SingleList])?;
 
-    fn parse(&mut self, name: &str, vals: Values) {
-        Self::validate(&vals, name);
-
-        *self = vals.literals[0].to_str();
+        Ok(values.literals[0].to_str())
     }
 }
 
 impl AttributeOption for bool {
-    const FORMS: &'static [ValueKind] = &[ValueKind::Name, ValueKind::SingleList];
+    #[inline]
+    fn parse(values: Values) -> Result<Self> {
+        validate(&values, &[ValueKind::Name, ValueKind::SingleList])?;
 
-    fn parse(&mut self, name: &str, vals: Values) {
-        Self::validate(&vals, name);
-
-        *self = if vals.literals.is_empty() {
-            true
-        } else {
-            vals.literals[0].to_bool()
-        };
+        Ok(values.literals.get(0).map_or(true, |l| l.to_bool()))
     }
 }
 
 impl AttributeOption for Vec<Ident> {
-    const FORMS: &'static [ValueKind] = &[ValueKind::List];
+    #[inline]
+    fn parse(values: Values) -> Result<Self> {
+        validate(&values, &[ValueKind::List])?;
 
-    fn parse(&mut self, name: &str, vals: Values) {
-        Self::validate(&vals, name);
-        *self = vals
-            .literals
-            .into_iter()
-            .map(|s| Ident::new(&s.to_str(), Span::call_site()))
-            .collect();
+        Ok(values.literals.into_iter().map(|l| l.to_ident()).collect())
     }
 }
 
 impl AttributeOption for Option<String> {
-    const FORMS: &'static [ValueKind] = &[ValueKind::Name, ValueKind::SingleList];
+    fn parse(values: Values) -> Result<Self> {
+        validate(&values, &[ValueKind::Name, ValueKind::SingleList])?;
 
-    fn parse(&mut self, name: &str, vals: Values) {
-        Self::validate(&vals, name);
-
-        *self = if vals.literals.is_empty() {
+        Ok(if values.literals.is_empty() {
             Some(String::new())
-        } else if let Lit::Bool(b) = &vals.literals[0] {
+        } else if let Lit::Bool(b) = &values.literals[0] {
             if b.value {
                 Some(String::new())
             } else {
                 None
             }
         } else {
-            let s = vals.literals[0].to_str();
-            match s.as_str() {
+            let s = values.literals[0].to_str();
+            match &s[..] {
                 "true" => Some(String::new()),
                 "false" => None,
                 _ => Some(s),
             }
-        };
+        })
     }
 }
 
 impl AttributeOption for OnlyIn {
-    const FORMS: &'static [ValueKind] = &[ValueKind::SingleList];
+    fn parse(values: Values) -> Result<Self> {
+        validate(&values, &[ValueKind::SingleList])?;
 
-    fn parse(&mut self, name: &str, vals: Values) {
-        Self::validate(&vals, name);
+        let lit = &values.literals[0];
 
-        let only = vals.literals[0].to_str();
-        let only = match &only[..] {
-            "guilds" => OnlyIn::Guild,
-            "dms" => OnlyIn::Dm,
-            _ => panic!("invalid only type: {:?}", only),
-        };
+        OnlyIn::from_str(&lit.to_str()[..], lit.span())
+    }
+}
 
-        *self = only;
+impl AttributeOption for Colour {
+    fn parse(values: Values) -> Result<Self> {
+        let span = values.span;
+        let value = String::parse(values)?;
+
+        Colour::from_str(&value)
+            .ok_or_else(|| Error::new(span, format_args!("invalid colour: \"{}\"", value)))
+    }
+}
+
+impl AttributeOption for HelpBehaviour {
+    fn parse(values: Values) -> Result<Self> {
+        let span = values.span;
+        let value = String::parse(values)?;
+
+        HelpBehaviour::from_str(&value)
+            .ok_or_else(|| Error::new(span, format_args!("invalid help behaviour: \"{}\"", value)))
+    }
+}
+
+impl AttributeOption for Checks {
+    #[inline]
+    fn parse(values: Values) -> Result<Self> {
+        <Vec<Ident> as AttributeOption>::parse(values).map(Checks)
+    }
+}
+
+impl AttributeOption for Permissions {
+    fn parse(values: Values) -> Result<Self> {
+        let perms = <Vec<Ident> as AttributeOption>::parse(values)?;
+
+        let mut permissions = Permissions::default();
+        for permission in perms {
+            let p = match Permissions::from_str(&permission.to_string()) {
+                Some(p) => p,
+                None => return Err(Error::new(permission.span(), "invalid permission")),
+            };
+
+            permissions.0 |= p.0;
+        }
+
+        Ok(permissions)
     }
 }
 
@@ -232,33 +308,28 @@ macro_rules! attr_option_num {
     ($($n:ty),*) => {
         $(
             impl AttributeOption for $n {
-                const FORMS: &'static [ValueKind] = &[ValueKind::SingleList];
+                fn parse(values: Values) -> Result<Self> {
+                    validate(&values, &[ValueKind::SingleList])?;
 
-                fn parse(&mut self, name: &str, vals: Values) {
-                    Self::validate(&vals, name);
-
-                    *self = if let Lit::Int(l) = &vals.literals[0] {
-                        l.value() as $n
-                    } else {
-                        let s = vals.literals[0].to_str();
-                        // We use `as_str()` here for forcing method resolution
-                        // to choose `&str`'s `parse` method, not our trait's `parse` method.
-                        // (`AttributeOption` is implemented for `String`)
-                        s.as_str().parse().expect("invalid integer")
-                    };
+                    Ok(match &values.literals[0] {
+                        Lit::Int(l) => l.base10_parse::<$n>()?,
+                        l => {
+                            let s = l.to_str();
+                            // Use `as_str` to guide the compiler to use `&str`'s parse method.
+                            // We don't want to use our `parse` method here (`impl AttributeOption for String`).
+                            match s.as_str().parse::<$n>() {
+                                Ok(n) => n,
+                                Err(_) => return Err(Error::new(l.span(), "invalid integer")),
+                            }
+                        }
+                    })
                 }
             }
 
             impl AttributeOption for Option<$n> {
-                const FORMS: &'static [ValueKind] = &[ValueKind::SingleList];
-
-                fn parse(&mut self, name: &str, vals: Values) {
-                    Self::validate(&vals, name);
-
-                    let mut n: $n = 0;
-                    n.parse(name, vals);
-
-                    *self = Some(n);
+                #[inline]
+                fn parse(values: Values) -> Result<Self> {
+                    <$n as AttributeOption>::parse(values).map(Some)
                 }
             }
         )*

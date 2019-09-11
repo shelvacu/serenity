@@ -106,9 +106,16 @@ impl CacheUpdate for ChannelDeleteEvent {
 
                 cache.categories.remove(&channel_id);
             },
-            // These are only relevant if this is a selfbot.
-            // TODO: Shouldn't I delete these from the cache?
-            Channel::Private(_) | Channel::Group(_) => (),
+            Channel::Private(ref channel) => {
+                let id = {
+                    channel.read().id
+                };
+
+                cache.private_channels.remove(&id);
+            },
+
+            // We ignore these because the delete event does not fire for these.
+            Channel::Group(_) => (),
             #[cfg(not(feature = "allow_exhaustive_enum"))]
             Channel::__Nonexhaustive => unreachable!(),
         };

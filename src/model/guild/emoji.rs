@@ -243,7 +243,7 @@ impl<'a> From<&'a Emoji> for EmojiId {
 
 impl EmojiId {
     #[inline]
-    pub fn url(&self, is_animated: bool) -> String {
+    pub fn url(self, is_animated: bool) -> String {
         let extension = if is_animated {"gif"} else {"png"};
         format!(cdn!("/emojis/{}.{}"), self.0, extension)
     }

@@ -5,16 +5,47 @@
 //! Using the [`with_embeds`] function to have the framework's help message use
 //! embeds:
 //!
-//! ```rs,no_run
-//! use serenity::framework::standard::help_commands;
-//! use serenity::Client;
+//! ```rust,no_run
+//! use serenity::framework::standard::{
+//!     StandardFramework,
+//!     help_commands,
+//!     Args,
+//!     HelpOptions,
+//!     CommandGroup,
+//!     CommandResult,
+//! };
+//! use serenity::framework::standard::macros::help;
+//! use serenity::model::prelude::{Message, UserId};
+//! use serenity::client::{EventHandler, Context, Client};
+//! use std::collections::HashSet;
 //! use std::env;
 //!
-//! let mut client = Client::new(&env::var("DISCORD_TOKEN").unwrap());
-//! use serenity::framework::StandardFramework;
+//! struct Handler;
+//!
+//! impl EventHandler for Handler {}
+//!
+//! #[help]
+//! fn my_help(
+//!    context: &mut Context,
+//!    msg: &Message,
+//!    args: Args,
+//!    help_options: &'static HelpOptions,
+//!    groups: &[&'static CommandGroup],
+//!    owners: HashSet<UserId>
+//! ) -> CommandResult {
+//! #  #[cfg(all(feature = "cache", feature = "http"))]
+//! # {
+//!    help_commands::with_embeds(context, msg, args, help_options, groups, owners)
+//! # }
+//! #
+//! # #[cfg(not(all(feature = "cache", feature = "http")))]
+//! # Ok(())
+//! }
+//!
+//! let mut client = Client::new(&env::var("DISCORD_TOKEN").unwrap(), Handler).unwrap();
 //!
 //! client.with_framework(StandardFramework::new()
-//!     .command("help", |c| c.exec_help(help_commands::with_embeds)));
+//!     .help(&MY_HELP));
 //! ```
 //!
 //! The same can be accomplished with no embeds by substituting `with_embeds`
@@ -133,7 +164,7 @@ impl Suggestions {
             .as_vec()
             .iter()
             .fold(0, |total_size, size| total_size + size.name.len());
-        let byte_len_of_sep = self.as_vec().len().checked_sub(1).unwrap_or(0) * separator.len();
+        let byte_len_of_sep = self.as_vec().len().saturating_sub(1) * separator.len();
         let mut result = String::with_capacity(size + byte_len_of_sep);
         result.push_str(first_iter_element.name.borrow());
 
@@ -576,7 +607,7 @@ fn fill_eligible_commands<'a>(
                     &group.options,
                     owners,
                     help_options,
-                    &context.get_cache(),
+                    &context.cache(),
                 )
             )
         }
@@ -604,7 +635,7 @@ fn fill_eligible_commands<'a>(
             &command.options,
             owners,
             help_options,
-            &context.get_cache(),
+            &context.cache(),
         );
 
         let name = format_command_name!(command_behaviour, &name);
@@ -796,7 +827,7 @@ pub fn searched_lowercase<'a>(
     None
 }
 
-/// Iterates over all commands and forges them into a `CustomisedHelpData`.
+/// Iterates over all commands and forges them into a `CustomisedHelpData`,
 /// taking `HelpOptions` into consideration when deciding on whether a command
 /// shall be picked and in what textual format.
 #[cfg(feature = "cache")]
@@ -809,7 +840,7 @@ pub fn create_customised_help_data<'a>(
     help_options: &'a HelpOptions,
     msg: &Message,
 ) -> CustomisedHelpData<'a> {
-    let cache = &context.get_cache();
+    let cache = &context.cache();
 
     if !args.is_empty() {
         let name = args.message();
@@ -970,7 +1001,7 @@ fn flatten_group_to_plain_string(
         );
     }
 
-    let joined_commands = format!("`{}`", group.command_names.join("`, `"));
+    let joined_commands = group.command_names.join(", ").to_string();
 
     let _ = write!(group_text, "{}", joined_commands);
 
@@ -1180,7 +1211,7 @@ pub fn with_embeds(
             ref help_description,
             ref suggestions,
         } => send_suggestion_embed(
-            &context.get_http(),
+            &context.http(),
             msg.channel_id,
             &help_description,
             &suggestions,
@@ -1189,7 +1220,7 @@ pub fn with_embeds(
         CustomisedHelpData::NoCommandFound {
             ref help_error_message,
         } => send_error_embed(
-            &context.get_http(),
+            &context.http(),
             msg.channel_id,
             help_error_message,
             help_options.embed_error_colour,
@@ -1198,7 +1229,7 @@ pub fn with_embeds(
             ref help_description,
             ref groups,
         } => send_grouped_commands_embed(
-            &context.get_http(),
+            &context.http(),
             &help_options,
             msg.channel_id,
             &help_description,
@@ -1206,7 +1237,7 @@ pub fn with_embeds(
             help_options.embed_success_colour,
         ),
         CustomisedHelpData::SingleCommand { ref command } => send_single_command_embed(
-            &context.get_http(),
+            &context.http(),
             &help_options,
             msg.channel_id,
             &command,
@@ -1365,7 +1396,7 @@ pub fn plain(
         CustomisedHelpData::SuggestedCommands {
             ref help_description,
             ref suggestions,
-        } => format!("{}: `{}`", help_description, suggestions.join("`, `")),
+        } => help_description.replace("{}", &suggestions.join("`, `")),
         CustomisedHelpData::NoCommandFound {
             ref help_error_message,
         } => help_error_message.to_string(),
@@ -1380,7 +1411,7 @@ pub fn plain(
         CustomisedHelpData::__Nonexhaustive => unreachable!(),
     };
 
-    if let Err(why) = msg.channel_id.say(&context.get_http(), result) {
+    if let Err(why) = msg.channel_id.say(&context.http(), result) {
         warn_about_failed_send!(&formatted_help, why);
     };
 

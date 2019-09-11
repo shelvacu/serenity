@@ -41,6 +41,7 @@ use crate::model::prelude::*;
 use self::{request::Request};
 use std::{
     fs::File,
+    sync::Arc,
     path::{Path, PathBuf},
 };
 
@@ -75,33 +76,33 @@ pub trait CacheHttp {
 #[cfg(feature = "client")]
 impl CacheHttp for Context {
     #[cfg(feature = "http")]
-    fn http(&self) -> &Http { &self.get_http() }
+    fn http(&self) -> &Http { Context::http(&self) }
     #[cfg(feature = "cache")]
-    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.get_cache()) }
+    fn cache(&self) -> Option<&CacheRwLock> { Some(Context::cache(&self)) }
 }
 
 #[cfg(feature = "client")]
 impl CacheHttp for &Context {
     #[cfg(feature = "http")]
-    fn http(&self) -> &Http { &self.get_http() }
+    fn http(&self) -> &Http { Context::http(&self) }
     #[cfg(feature = "cache")]
-    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.get_cache()) }
+    fn cache(&self) -> Option<&CacheRwLock> { Some(Context::cache(&self)) }
 }
 
 #[cfg(feature = "client")]
 impl CacheHttp for &mut Context {
     #[cfg(feature = "http")]
-    fn http(&self) -> &Http { &self.get_http() }
+    fn http(&self) -> &Http { Context::http(&self) }
     #[cfg(feature = "cache")]
-    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.get_cache()) }
+    fn cache(&self) -> Option<&CacheRwLock> { Some(Context::cache(&self)) }
 }
 
 #[cfg(feature = "client")]
 impl CacheHttp for &&mut Context {
     #[cfg(feature = "http")]
-    fn http(&self) -> &Http { &self.get_http() }
+    fn http(&self) -> &Http { Context::http(&self) }
     #[cfg(feature = "cache")]
-    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.get_cache()) }
+    fn cache(&self) -> Option<&CacheRwLock> { Some(Context::cache(&self)) }
 }
 
 #[cfg(all(feature = "cache", feature = "http"))]
@@ -110,9 +111,14 @@ impl CacheHttp for (&CacheRwLock, &Http) {
     fn http(&self) -> &Http { &self.1 }
 }
 
+#[cfg(feature = "http")]
 impl CacheHttp for &Http {
-    #[cfg(feature = "http")]
     fn http(&self) -> &Http { *self }
+}
+
+#[cfg(feature = "http")]
+impl CacheHttp for Arc<Http> {
+    fn http(&self) -> &Http { &*self }
 }
 
 #[cfg(all(feature = "cache", feature = "http"))]

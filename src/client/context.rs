@@ -324,12 +324,24 @@ impl Context {
     }
 
     #[cfg(feature = "http")]
+    #[deprecated(since = "0.7.0-shel4", note = "bad naming convention, use .http()")]
     pub fn get_http(&self) -> &Arc<Http> {
+        self.http()
+    }
+
+    #[cfg(feature = "http")]
+    pub fn http(&self) -> &Arc<Http> {
         &self.cache_and_http.http
     }
 
     #[cfg(feature = "cache")]
+    #[deprecated(since = "0.7.0-shel4", note = "bad naming convention, use .cache()")]
     pub fn get_cache(&self) -> &CacheRwLock {
+        self.cache()
+    }
+
+    #[cfg(feature = "cache")]
+    pub fn cache(&self) -> &CacheRwLock {
         &self.cache_and_http.cache
     }
 }
