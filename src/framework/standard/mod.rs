@@ -30,6 +30,8 @@ use std::sync::Arc;
 
 use threadpool::ThreadPool;
 use uwl::{UnicodeStream, StrExt};
+#[allow(unused_imports)]
+use log::{error, debug, info, trace, warn};
 
 #[cfg(feature = "cache")]
 use crate::cache::CacheRwLock;
@@ -630,6 +632,7 @@ impl Framework for StandardFramework {
         let prefix = parse::prefix(&mut ctx, &msg, &mut stream, &self.config);
 
         if prefix.is_some() && stream.rest().is_empty() {
+            debug!("prefix only");
 
             if let Some(prefix_only) = &self.prefix_only {
                 let prefix_only = Arc::clone(&prefix_only);
@@ -644,7 +647,7 @@ impl Framework for StandardFramework {
         }
 
         if prefix.is_none() && !(self.config.no_dm_prefix && msg.is_private()) {
-
+            debug!("normal message");
             if let Some(normal) = &self.normal_message {
                 let normal = Arc::clone(&normal);
                 let msg = msg.clone();
@@ -658,7 +661,7 @@ impl Framework for StandardFramework {
         }
 
         if let Some(error) = self.should_fail_common(&msg) {
-
+            debug!("should_fail_common");
             if let Some(dispatch) = &self.dispatch {
                 dispatch(&mut ctx, &msg, error);
             }
@@ -674,6 +677,8 @@ impl Framework for StandardFramework {
             &self.config,
             self.help.as_ref().map(|h| h.options.names),
         );
+
+        debug!("Invocation: {:#?}", &invocation);
 
         let invoke = match invocation {
             Ok(i) => i,
@@ -742,7 +747,7 @@ impl Framework for StandardFramework {
                 #[allow(clippy::useless_let_if_seq)]
                 let mut args = {
                     use std::borrow::Cow;
-
+                    debug!("Invoke command:");
                     let mut delims = Cow::Borrowed(&self.config.delimiters);
 
                     // If user has configured the command's own delimiters, use those instead.
@@ -768,6 +773,7 @@ impl Framework for StandardFramework {
                 if let Some(error) =
                     self.should_fail(&mut ctx, &msg, &mut args, &command.options, &group.options)
                 {
+                    debug!("should fail");
                     if let Some(dispatch) = &self.dispatch {
                         dispatch(&mut ctx, &msg, error);
                     }
@@ -781,14 +787,18 @@ impl Framework for StandardFramework {
                 let name = &command.options.names[0];
                 threadpool.execute(move || {
                     if let Some(before) = before {
+                        debug!("before");
                         if !before(&mut ctx, &msg, name) {
                             return;
                         }
                     }
 
+                    debug!("command.fun");
                     let res = (command.fun)(&mut ctx, &msg, args);
+                    debug!("res: {:#?}", res);
 
                     if let Some(after) = after {
+                        debug!("after");
                         after(&mut ctx, &msg, name, res);
                     }
                 });
