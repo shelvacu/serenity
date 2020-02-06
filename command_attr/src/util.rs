@@ -210,7 +210,7 @@ impl Parse for Expr {
             // Because boolean literals are converted into `Ident` tokens,
             // we must be more vigilant with how we parse the `IdentAccess` structure and `Lit`s.
             let access = input.step(|cursor| match cursor.ident() {
-                Some((ref i, mut cursor)) if i != "true" && i != "false" => {
+                Some((ref ident, mut cursor)) if ident != "true" && ident != "false" => {
                     let i2 = match cursor.punct() {
                         Some((ref p, c)) if p.as_char() == '.' => c.ident().map(|(i2, c)| {
                             cursor = c;
@@ -220,7 +220,7 @@ impl Parse for Expr {
                         _ => None,
                     };
 
-                    return Ok((IdentAccess(i.clone(), i2), cursor));
+                    Ok((IdentAccess(ident.clone(), i2), cursor))
                 }
                 _ => Err(cursor.error("...")),
             });

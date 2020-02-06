@@ -1,3 +1,4 @@
+#![allow(clippy::unreadable_literal)]
 use crate::consts::{CHECK, COMMAND, GROUP, GROUP_OPTIONS};
 use crate::util::{
     Argument, Array, AsOption, Braced, Bracketed, Expr, Field, IdentAccess, IdentExt2, LitExt,
@@ -165,11 +166,12 @@ impl ToTokens for CommandFun {
             _pub,
             cfgs,
             docs,
-            attributes: _,
+            //attributes: _,
             name,
             args,
             ret,
             body,
+            ..
         } = self;
 
         stream.extend(quote! {
