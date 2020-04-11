@@ -38,11 +38,10 @@ use log::{error, debug, warn};
 /// A runner for managing a [`Shard`] and its respective WebSocket client.
 ///
 /// [`Shard`]: ../../../gateway/struct.Shard.html
-pub struct ShardRunner<H: EventHandler + Send + Sync + 'static,
-                       RH: RawEventHandler + Send + Sync + 'static> {
+pub struct ShardRunner {
     data: Arc<RwLock<ShareMap>>,
-    event_handler: Option<Arc<H>>,
-    raw_event_handler: Option<Arc<RH>>,
+    event_handler: Option<Arc<dyn EventHandler>>,
+    raw_event_handler: Option<Arc<dyn RawEventHandler>>,
     #[cfg(feature = "framework")]
     framework: Arc<Mutex<Option<Box<dyn Framework + Send>>>>,
     manager_tx: Sender<ShardManagerMessage>,
@@ -57,10 +56,9 @@ pub struct ShardRunner<H: EventHandler + Send + Sync + 'static,
     cache_and_http: Arc<CacheAndHttp>,
 }
 
-impl<H: EventHandler + Send + Sync + 'static,
-     RH: RawEventHandler + Send + Sync + 'static> ShardRunner<H, RH> {
+impl ShardRunner {
     /// Creates a new runner for a Shard.
-    pub fn new(opt: ShardRunnerOptions<H, RH>) -> Self {
+    pub fn new(opt: ShardRunnerOptions) -> Self {
         let (tx, rx) = mpsc::channel();
 
         Self {
@@ -76,7 +74,6 @@ impl<H: EventHandler + Send + Sync + 'static,
             threadpool: opt.threadpool,
             #[cfg(feature = "voice")]
             voice_manager: opt.voice_manager,
-            #[cfg(any(feature = "cache", feature = "http"))]
             cache_and_http: opt.cache_and_http,
         }
     }
@@ -217,11 +214,36 @@ impl<H: EventHandler + Send + Sync + 'static,
             return true;
         }
 
+        // Send a Close Frame to Discord, which allows a bot to "log off"
         let _ = self.shard.client.close(Some(CloseFrame {
             code: 1000.into(),
             reason: Cow::from(""),
         }));
 
+        // In return, we wait for either a Close Frame response, or an error, after which this WS is deemed
+        // disconnected from Discord.
+        loop {
+            match self.shard.client.read_message() {
+                Ok(tungstenite::Message::Close(_)) => break,
+                Err(_) => {
+                    warn!(
+                        "[ShardRunner {:?}] Received an error awaiting close frame",
+                        self.shard.shard_info(),
+                    );
+                    break;
+                }
+                _ => continue,
+            }
+        }
+
+        // Inform the manager that shutdown for this shard has finished.
+        if let Err(why) = self.manager_tx.send(ShardManagerMessage::ShutdownFinished(id)) {
+            warn!(
+                "[ShardRunner {:?}] Could not send ShutdownFinished: {:#?}",
+                self.shard.shard_info(),
+                why,
+            );
+        }
         false
     }
 
@@ -270,6 +292,11 @@ impl<H: EventHandler + Send + Sync + 'static,
                         true
                     },
                     ShardClientMessage::Manager(ShardManagerMessage::ShutdownInitiated) => {
+                        // nb: not sent here
+
+                        true
+                    },
+                    ShardClientMessage::Manager(ShardManagerMessage::ShutdownFinished(_)) => {
                         // nb: not sent here
 
                         true
@@ -520,11 +547,10 @@ impl<H: EventHandler + Send + Sync + 'static,
 /// Options to be passed to [`ShardRunner::new`].
 ///
 /// [`ShardRunner::new`]: struct.ShardRunner.html#method.new
-pub struct ShardRunnerOptions<H: EventHandler + Send + Sync + 'static,
-                              RH: RawEventHandler + Send  + Sync + 'static> {
+pub struct ShardRunnerOptions {
     pub data: Arc<RwLock<ShareMap>>,
-    pub event_handler: Option<Arc<H>>,
-    pub raw_event_handler: Option<Arc<RH>>,
+    pub event_handler: Option<Arc<dyn EventHandler>>,
+    pub raw_event_handler: Option<Arc<dyn RawEventHandler>>,
     #[cfg(feature = "framework")]
     pub framework: Arc<Mutex<Option<Box<dyn Framework + Send>>>>,
     pub manager_tx: Sender<ShardManagerMessage>,
@@ -532,6 +558,5 @@ pub struct ShardRunnerOptions<H: EventHandler + Send + Sync + 'static,
     pub threadpool: ThreadPool,
     #[cfg(feature = "voice")]
     pub voice_manager: Arc<Mutex<ClientVoiceManager>>,
-    #[cfg(any(feature = "cache", feature = "http"))]
     pub cache_and_http: Arc<CacheAndHttp>,
 }

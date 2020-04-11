@@ -274,11 +274,9 @@ impl Configuration {
     ///     Ok(())
     /// }
     ///
-    /// group!({
-    ///     name: "peng",
-    ///     options: {},
-    ///     commands: [ping]
-    /// });
+    /// #[group]
+    /// #[commands(ping)]
+    /// struct Peng;
     ///
     /// # fn main() {
     /// # use serenity::prelude::*;
@@ -500,7 +498,8 @@ impl Configuration {
         T: ToString,
         It: IntoIterator<Item = T>,
     {
-        self.prefixes = prefixes.into_iter().map(|x| x.to_string()).collect();
+
+        self.prefixes = prefixes.into_iter().map(|p| p.to_string()).collect();
 
         self
     }
@@ -581,14 +580,18 @@ impl Configuration {
     }
 
     /// Whether the framework shouldn't care about the user's input if it's:
-    /// `~command`, `~Command`, or `~COMMAND`.
+    /// `~command`, `~Command`, or `~COMMAND`; `mayacommand`, `MayACommand`, `MAYACOMMAND`, et cetera.
     ///
-    /// Setting this to `true` will result in *all* command names to be case
+    /// Setting this to `true` will result in *all* prefixes and command names to be case
     /// insensitive.
     ///
     /// **Note**: Defaults to `false`.
     pub fn case_insensitivity(&mut self, cs: bool) -> &mut Self {
         self.case_insensitive = cs;
+
+        for prefix in &mut self.prefixes {
+            *prefix = prefix.to_lowercase();
+        }
 
         self
     }

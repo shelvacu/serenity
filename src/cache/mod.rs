@@ -7,10 +7,6 @@
 //! allows data to be "corrupted", and _may or may not_ cause misfunctions
 //! within the library. Mutate data at your own discretion.
 //!
-//! A "globally available" instance of the Cache is available at
-//! [`CACHE`]. This is the instance that is updated by the library,
-//! meaning you should _not_ need to maintain updating it yourself in any case.
-//!
 //! # Use by Models
 //!
 //! Most models of Discord objects, such as the [`Message`], [`GuildChannel`],
@@ -39,7 +35,6 @@
 //! [`Message`]: ../model/channel/struct.Message.html
 //! [`GuildChannel`]: ../model/channel/struct.GuildChannel.html
 //! [`Role`]: ../model/guild/struct.Role.html
-//! [`CACHE`]: ../struct.CACHE.html
 //! [`http`]: ../http/index.html
 
 use std::str::FromStr;
@@ -999,6 +994,7 @@ mod test {
                 member: None,
                 mention_everyone: false,
                 mention_roles: vec![],
+                mention_channels: None,
                 mentions: vec![],
                 nonce: Value::Number(Number::from(1)),
                 pinned: false,
@@ -1006,6 +1002,10 @@ mod test {
                 timestamp: datetime.clone(),
                 tts: false,
                 webhook_id: None,
+                activity: None,
+                application: None,
+                message_reference: None,
+                flags: None,
                 _nonexhaustive: (),
             },
             _nonexhaustive: (),
@@ -1100,6 +1100,7 @@ mod test {
                     premium_subscription_count: 0,
                     banner: None,
                     vanity_url_code: Some("bruhmoment".to_string()),
+                    preferred_locale: "en-US".to_string(),
                     _nonexhaustive: (),
                 },
                 _nonexhaustive: (),
@@ -1147,7 +1148,7 @@ mod test {
 
 /// A neworphantype to allow implementing `AsRef<CacheRwLock>`
 /// for the automatically dereferenced underlying type.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CacheRwLock(Arc<RwLock<Cache>>);
 
 impl From<Arc<RwLock<Cache>>> for CacheRwLock {
@@ -1159,6 +1160,12 @@ impl From<Arc<RwLock<Cache>>> for CacheRwLock {
 impl AsRef<CacheRwLock> for CacheRwLock {
     fn as_ref(&self) -> &CacheRwLock {
         &self
+    }
+}
+
+impl Default for CacheRwLock {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(Cache::default())))
     }
 }
 

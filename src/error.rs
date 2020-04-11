@@ -175,46 +175,55 @@ impl From<ReqwestError> for Error {
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.description())
-    }
-}
-
-impl StdError for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::Decode(msg, _) | Error::Other(msg) => msg,
-            Error::ExceededLimit(..) => "Input exceeded a limit",
-            Error::Format(ref inner) => inner.description(),
-            Error::Io(ref inner) => inner.description(),
-            Error::Json(ref inner) => inner.description(),
-            Error::Model(ref inner) => inner.description(),
-            Error::Num(ref inner) => inner.description(),
-            Error::Url(ref inner) => inner,
+        match self {
+            Error::Decode(msg, _) | Error::Other(msg) => f.write_str(msg),
+            Error::ExceededLimit(..) => f.write_str("Input exceeded a limit"),
+            Error::Format(inner) => fmt::Display::fmt(&inner, f),
+            Error::Io(inner) => fmt::Display::fmt(&inner, f),
+            Error::Json(inner) => fmt::Display::fmt(&inner, f),
+            Error::Model(inner) => fmt::Display::fmt(&inner, f),
+            Error::Num(inner) => fmt::Display::fmt(&inner, f),
+            Error::Url(msg) => f.write_str(&msg),
             #[cfg(feature = "client")]
-            Error::Client(ref inner) => inner.description(),
+            Error::Client(inner) => fmt::Display::fmt(&inner, f),
             #[cfg(feature = "gateway")]
-            Error::Gateway(ref inner) => inner.description(),
+            Error::Gateway(inner) => fmt::Display::fmt(&inner, f),
             #[cfg(feature = "http")]
-            Error::Http(ref inner) => inner.description(),
+            Error::Http(inner) => fmt::Display::fmt(&inner, f),
             #[cfg(feature = "voice")]
-            Error::Opus(ref inner) => inner.description(),
+            Error::Opus(inner) => fmt::Display::fmt(&inner, f),
             #[cfg(all(feature = "gateway", not(feature = "native_tls_backend")))]
-            Error::Rustls(ref inner) => inner.description(),
+            Error::Rustls(inner) => fmt::Display::fmt(&inner, f),
             #[cfg(feature = "gateway")]
-            Error::Tungstenite(ref inner) => inner.description(),
+            Error::Tungstenite(inner) => fmt::Display::fmt(&inner, f),
             #[cfg(feature = "voice")]
-            Error::Voice(_) => "Voice error",
+            Error::Voice(_) => f.write_str("Voice error"),
             #[cfg(not(feature = "allow_exhaustive_enum"))]
             Error::__Nonexhaustive => unreachable!(),
         }
     }
+}
 
-    fn cause(&self) -> Option<&dyn StdError> {
-        match *self {
-            Error::Json(ref inner) => Some(inner),
-            Error::Io(ref inner) => Some(inner),
+impl StdError for Error {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Error::Format(inner) => Some(inner),
+            Error::Io(inner) => Some(inner),
+            Error::Json(inner) => Some(inner),
+            Error::Model(inner) => Some(inner),
+            Error::Num(inner) => Some(inner),
+            #[cfg(feature = "client")]
+            Error::Client(inner) => Some(inner),
             #[cfg(feature = "gateway")]
-            Error::Tungstenite(ref inner) => Some(inner),
+            Error::Gateway(inner) => Some(inner),
+            #[cfg(feature = "http")]
+            Error::Http(inner) => Some(inner),
+            #[cfg(feature = "voice")]
+            Error::Opus(inner) => Some(inner),
+            #[cfg(all(feature = "gateway", not(feature = "native_tls_backend")))]
+            Error::Rustls(inner) => Some(inner),
+            #[cfg(feature = "gateway")]
+            Error::Tungstenite(inner) => Some(inner),
             _ => None,
         }
     }

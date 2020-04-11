@@ -152,16 +152,19 @@ pub struct Guild {
     pub voice_states: HashMap<UserId, VoiceState>,
     /// The server's description
     pub description: Option<String>,
-    /// The server's premium boosting level
+    /// The server's premium boosting level.
     #[serde(default)]
     pub premium_tier: PremiumTier,
-    /// The total number of users currently boosting this server
+    /// The total number of users currently boosting this server.
     #[serde(default)]
     pub premium_subscription_count: u64,
-    /// The server's banner
+    /// The server's banner.
     pub banner: Option<String>,
-    /// The vanity url code for the guild
+    /// The vanity url code for the guild.
     pub vanity_url_code: Option<String>,
+    /// The preferred locale of this guild only set if guild has the "DISCOVERABLE"
+    /// feature, defaults to en-US.
+    pub preferred_locale: String,
     #[serde(skip)]
     pub(crate) _nonexhaustive: (),
 }
@@ -722,8 +725,8 @@ impl Guild {
     /// Change the order of a role:
     ///
     /// ```rust,ignore
-    /// use serenity::model::RoleId;
-    /// guild.edit_role_position(RoleId(8), 2);
+    /// use serenity::model::id::RoleId;
+    /// guild.edit_role_position(&context, RoleId(8), 2);
     /// ```
     ///
     /// [`Role`]: struct.Role.html
@@ -869,7 +872,15 @@ impl Guild {
     /// [Kick Members]: ../permissions/struct.Permissions.html#associatedconstant.KICK_MEMBERS
     #[cfg(feature = "http")]
     #[inline]
-    pub fn kick<U: Into<UserId>>(&self, http: impl AsRef<Http>, user_id: U) -> Result<()> { self.id.kick(&http, user_id) }
+    pub fn kick<U: Into<UserId>>(&self, http: impl AsRef<Http>, user_id: U) -> Result<()> {
+        self.id.kick(&http, user_id)
+    }
+
+    #[cfg(feature = "http")]
+    #[inline]
+    pub fn kick_with_reason<U: Into<UserId>>(&self, http: impl AsRef<Http>, user_id: U, reason: &str) -> Result<()> {
+        self.id.kick_with_reason(&http, user_id, reason)
+    }
 
     /// Leaves the guild.
     #[inline]
@@ -1855,6 +1866,10 @@ impl<'de> Deserialize<'de> for Guild {
             Some(v) => Option::<String>::deserialize(v).map_err(DeError::custom)?,
             None => None,
         };
+        let preferred_locale = map.remove("preferred_locale") 
+            .ok_or_else(|| DeError::custom("expected preferred locale"))
+            .and_then(String::deserialize)
+            .map_err(DeError::custom)?;
 
         Ok(Self {
             afk_channel_id,
@@ -1886,6 +1901,7 @@ impl<'de> Deserialize<'de> for Guild {
             premium_subscription_count,
             banner,
             vanity_url_code,
+            preferred_locale,
             _nonexhaustive: (),
         })
     }
@@ -2330,6 +2346,7 @@ mod test {
                 premium_subscription_count: 12,
                 banner: None,
                 vanity_url_code: Some("bruhmoment".to_string()),
+                preferred_locale: "en-US".to_string(),
                 _nonexhaustive: (),
             }
         }

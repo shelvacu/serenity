@@ -6,10 +6,11 @@ use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        mpsc::{self, Sender},
-        Arc
+        mpsc::{self, channel, Sender, Receiver},
+        Arc,
     },
-    thread
+    thread,
+    time::Duration
 };
 use super::super::super::{EventHandler, RawEventHandler};
 use super::{
@@ -76,14 +77,14 @@ use crate::client::bridge::voice::ClientVoiceManager;
 /// # let http = &cache_and_http.http;
 /// let gateway_url = Arc::new(Mutex::new(http.get_gateway()?.url));
 /// let data = Arc::new(RwLock::new(ShareMap::custom()));
-/// let event_handler = Arc::new(Handler);
+/// let event_handler = Arc::new(Handler) as Arc<dyn EventHandler>;
 /// let framework = Arc::new(Mutex::new(None));
 /// let threadpool = ThreadPool::with_name("my threadpool".to_owned(), 5);
 ///
 /// ShardManager::new(ShardManagerOptions {
 ///     data: &data,
 ///     event_handler: &Some(event_handler),
-///     raw_event_handler: &None::<Arc<Handler>>,
+///     raw_event_handler: &None,
 ///     framework: &framework,
 ///     // the shard index to start initiating from
 ///     shard_index: 0,
@@ -96,6 +97,7 @@ use crate::client::bridge::voice::ClientVoiceManager;
 ///     # voice_manager: &Arc::new(Mutex::new(ClientVoiceManager::new(0, UserId(0)))),
 ///     ws_url: &gateway_url,
 ///     # cache_and_http: &cache_and_http,
+///     guild_subscriptions: true,
 /// });
 /// #     Ok(())
 /// # }
@@ -127,16 +129,13 @@ pub struct ShardManager {
     /// The total shards in use, 1-indexed.
     shard_total: u64,
     shard_queuer: Sender<ShardQueuerMessage>,
+    shard_shutdown: Receiver<ShardId>,
 }
 
 impl ShardManager {
     /// Creates a new shard manager, returning both the manager and a monitor
     /// for usage in a separate thread.
-    pub fn new<H, RH>(
-        opt: ShardManagerOptions<'_, H, RH>,
-    ) -> (Arc<Mutex<Self>>, ShardManagerMonitor)
-        where H: EventHandler + Send + Sync + 'static,
-              RH: RawEventHandler + Send + Sync + 'static {
+    pub fn new(opt: ShardManagerOptions<'_>) -> (Arc<Mutex<Self>>, ShardManagerMonitor) {
         let (thread_tx, thread_rx) = mpsc::channel();
         let (shard_queue_tx, shard_queue_rx) = mpsc::channel();
 
@@ -158,24 +157,28 @@ impl ShardManager {
             voice_manager: Arc::clone(opt.voice_manager),
             ws_url: Arc::clone(opt.ws_url),
             cache_and_http: Arc::clone(&opt.cache_and_http),
+            guild_subscriptions: opt.guild_subscriptions,
         };
 
         thread::spawn(move || {
             shard_queuer.run();
         });
 
+        let (shutdown_send, shutdown_recv) = channel();
         let manager = Arc::new(Mutex::new(Self {
             monitor_tx: thread_tx,
             shard_index: opt.shard_index,
             shard_init: opt.shard_init,
             shard_queuer: shard_queue_tx,
             shard_total: opt.shard_total,
+            shard_shutdown: shutdown_recv,
             runners,
         }));
 
         (Arc::clone(&manager), ShardManagerMonitor {
             rx: thread_rx,
             manager,
+            shutdown: shutdown_send,
         })
     }
 
@@ -298,6 +301,20 @@ impl ShardManager {
                     why,
                 );
             }
+            match self.shard_shutdown.recv_timeout(Duration::from_secs(5)) {
+                Ok(shutdown_shard_id) =>
+                    if shutdown_shard_id != shard_id {
+                        warn!(
+                            "Failed to cleanly shutdown shard {}: Shutdown channel sent incorrect ID",
+                            shard_id,
+                        );
+                    },
+                Err(why) => warn!(
+                    "Failed to cleanly shutdown shard {}: {:?}",
+                    shard_id,
+                    why,
+                )
+            }
         }
 
         self.runners.lock().remove(&shard_id).is_some()
@@ -356,10 +373,10 @@ impl Drop for ShardManager {
     }
 }
 
-pub struct ShardManagerOptions<'a, H: EventHandler + Send + Sync + 'static, RH: RawEventHandler + Send + Sync + 'static> {
+pub struct ShardManagerOptions<'a> {
     pub data: &'a Arc<RwLock<ShareMap>>,
-    pub event_handler: &'a Option<Arc<H>>,
-    pub raw_event_handler: &'a Option<Arc<RH>>,
+    pub event_handler: &'a Option<Arc<dyn EventHandler>>,
+    pub raw_event_handler: &'a Option<Arc<dyn RawEventHandler>>,
     #[cfg(feature = "framework")]
     pub framework: &'a Arc<Mutex<Option<Box<dyn Framework + Send>>>>,
     pub shard_index: u64,
@@ -370,4 +387,5 @@ pub struct ShardManagerOptions<'a, H: EventHandler + Send + Sync + 'static, RH: 
     pub voice_manager: &'a Arc<Mutex<ClientVoiceManager>>,
     pub ws_url: &'a Arc<Mutex<String>>,
     pub cache_and_http: &'a Arc<CacheAndHttp>,
+    pub guild_subscriptions: bool,
 }

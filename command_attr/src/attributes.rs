@@ -4,7 +4,7 @@ use syn::spanned::Spanned;
 use syn::{Attribute, Ident, Lit, LitStr, Meta, NestedMeta, Path};
 
 use crate::structures::{Checks, Colour, HelpBehaviour, OnlyIn, Permissions};
-use crate::util::LitExt;
+use crate::util::{AsOption, LitExt};
 
 use std::fmt::{self, Write};
 
@@ -217,6 +217,15 @@ impl AttributeOption for bool {
     }
 }
 
+impl AttributeOption for Ident {
+    #[inline]
+    fn parse(values: Values) -> Result<Self> {
+        validate(&values, &[ValueKind::SingleList])?;
+
+        Ok(values.literals[0].to_ident())
+    }
+}
+
 impl AttributeOption for Vec<Ident> {
     #[inline]
     fn parse(values: Values) -> Result<Self> {
@@ -228,7 +237,7 @@ impl AttributeOption for Vec<Ident> {
 
 impl AttributeOption for Option<String> {
     fn parse(values: Values) -> Result<Self> {
-        validate(&values, &[ValueKind::Name, ValueKind::SingleList])?;
+        validate(&values, &[ValueKind::Name, ValueKind::Equals, ValueKind::SingleList])?;
 
         Ok(if values.literals.is_empty() {
             Some(String::new())
@@ -301,6 +310,13 @@ impl AttributeOption for Permissions {
         }
 
         Ok(permissions)
+    }
+}
+
+impl<T: AttributeOption> AttributeOption for AsOption<T> {
+    #[inline]
+    fn parse(values: Values) -> Result<Self> {
+        Ok(AsOption(Some(T::parse(values)?)))
     }
 }
 

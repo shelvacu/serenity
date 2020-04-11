@@ -1,86 +1,56 @@
 use crate::constants;
-use reqwest::{
-    Client,
-    header::{AUTHORIZATION, USER_AGENT, CONTENT_TYPE, HeaderValue, HeaderMap as Headers},
+use reqwest::blocking::{
     multipart::Part,
+    Client,
+    ClientBuilder,
     Response as ReqwestResponse,
+};
+use reqwest::{
+    header::{AUTHORIZATION, USER_AGENT, CONTENT_TYPE, HeaderValue, HeaderMap as Headers},
     StatusCode,
     Url,
 };
 use crate::internal::prelude::*;
 use crate::model::prelude::*;
 use super::{
-    ratelimiting::{perform, RateLimit},
+    ratelimiting::{Ratelimiter, RatelimitedRequest},
     request::Request,
-    routing::{Route, RouteInfo},
+    routing::RouteInfo,
     AttachmentType,
     GuildPagination,
     HttpError,
 };
-use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use log::{debug, trace};
 use std::{
-    collections::{BTreeMap, HashMap},
-    io::ErrorKind as IoErrorKind,
+    collections::BTreeMap,
     sync::Arc,
+    borrow::Cow,
 };
 
 pub struct Http {
-    client: Client,
+    client: Arc<Client>,
+    pub ratelimiter: Ratelimiter,
     pub token: String,
-    pub limiter: Arc<Mutex<()>>,
-    /// The routes mutex is a HashMap of each [`Route`] and their respective
-    /// ratelimit information.
-    ///
-    /// See the documentation for [`RateLimit`] for more information on how the
-    /// library handles ratelimiting.
-    ///
-    /// # Examples
-    ///
-    /// View the `reset` time of the route for `ChannelsId(7)`:
-    ///
-    /// ```rust,no_run
-    /// use serenity::http::{ratelimiting::{Route}};
-    /// # use serenity::http::Http;
-    /// # let http = Http::default();
-    /// let routes = http.routes.lock();
-    ///
-    /// if let Some(route) = routes.get(&Route::ChannelsId(7)) {
-    ///     println!("Reset time at: {}", route.lock().reset);
-    /// }
-    /// ```
-    ///
-    /// [`RateLimit`]: struct.RateLimit.html
-    /// [`Route`]: ../routing/enum.Route.html
-    pub routes: Arc<Mutex<HashMap<Route, Arc<Mutex<RateLimit>>>>>,
 }
 
 impl Http {
-    pub fn new(client: Client, token: &str) -> Self {
+    pub fn new(client: Arc<Client>, token: &str) -> Self {
+        let client2 = Arc::clone(&client);
+
         Http {
             client,
+            ratelimiter: Ratelimiter::new(client2, token.to_string()),
             token: token.to_string(),
-            limiter: Arc::new(Mutex::new(())),
-            routes: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 
     pub fn new_with_token(token: &str) -> Self {
-        Http {
-            #[cfg(not(feature = "native_tls_backend"))]
-            client: Client::builder()
-                .use_rustls_tls()
-                .build().expect("Cannot build Reqwest::Client."),
-            #[cfg(feature = "native_tls_backend")]
-            client: Client::builder()
-                .use_default_tls()
-                .build().expect("Cannot build Reqwest::Client."),
-            token: token.to_string(),
-            limiter: Arc::new(Mutex::new(())),
-            routes: Arc::new(Mutex::new(HashMap::default())),
-        }
+        let builder = configure_client_backend(Client::builder());
+        let built = builder.build().expect("Cannot build reqwest::Client");
+
+        Self::new(Arc::new(built), token)
     }
 
     /// Adds a [`User`] as a recipient to a [`Group`].
@@ -137,49 +107,6 @@ impl Http {
                 user_id,
             },
         })
-    }
-
-    /// Ban zeyla from a [`Guild`], removing her messages sent in the last X number
-    /// of days.
-    ///
-    /// Passing a `delete_message_days` of `0` is equivalent to not removing any
-    /// messages. Up to `7` days' worth of messages may be deleted.
-    ///
-    /// **Note**: Requires that you have the [Ban Members] permission.
-    ///
-    /// [`Guild`]: ../model/guild/struct.Guild.html
-    /// [Ban Members]: ../model/permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
-    pub fn ban_zeyla(&self, guild_id: u64, delete_message_days: u8, reason: &str) -> Result<()> {
-        self.ban_user(guild_id, 114_941_315_417_899_012, delete_message_days, reason)
-    }
-
-    /// Ban luna from a [`Guild`], removing her messages sent in the last X number
-    /// of days.
-    ///
-    /// Passing a `delete_message_days` of `0` is equivalent to not removing any
-    /// messages. Up to `7` days' worth of messages may be deleted.
-    ///
-    /// **Note**: Requires that you have the [Ban Members] permission.
-    ///
-    /// [`Guild`]: ../model/guild/struct.Guild.html
-    /// [Ban Members]: ../model/permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
-    pub fn ban_luna(&self, guild_id: u64, delete_message_days: u8, reason: &str) -> Result<()> {
-        self.ban_user(guild_id, 180_731_582_049_550_336, delete_message_days, reason)
-    }
-
-    /// Ban the serenity servermoms from a [`Guild`], removing their messages
-    /// sent in the last X number of days.
-    ///
-    /// Passing a `delete_message_days` of `0` is equivalent to not removing any
-    /// messages. Up to `7` days' worth of messages may be deleted.
-    ///
-    /// **Note**: Requires that you have the [Ban Members] permission.
-    ///
-    /// [`Guild`]: ../model/guild/struct.Guild.html
-    /// [Ban Members]: ../model/permissions/struct.Permissions.html#associatedconstant.BAN_MEMBERS
-    pub fn ban_servermoms(&self, guild_id: u64, delete_message_days: u8, reason: &str) -> Result<()> {
-        self.ban_zeyla(guild_id, delete_message_days, reason)?;
-        self.ban_luna(guild_id, delete_message_days, reason)
     }
 
     /// Broadcasts that the current user is typing in the given [`Channel`].
@@ -1433,10 +1360,20 @@ impl Http {
 
     /// Kicks a member from a guild.
     pub fn kick_member(&self, guild_id: u64, user_id: u64) -> Result<()> {
+        self.kick_member_with_reason(guild_id, user_id, "")
+    }
+
+    /// Kicks a member from a guild with a provided reason.
+    pub fn kick_member_with_reason(&self, guild_id: u64, user_id: u64, reason: &str) -> Result<()> {
+
         self.wind(204, Request {
             body: None,
             headers: None,
-            route: RouteInfo::KickMember { guild_id, user_id },
+            route: RouteInfo::KickMember {
+                guild_id,
+                user_id,
+                reason,
+            },
         })
     }
 
@@ -1484,26 +1421,38 @@ impl Http {
             Err(_) => return Err(Error::Url(uri)),
         };
 
-        let mut multipart = reqwest::multipart::Form::new();
+        let mut multipart = reqwest::blocking::multipart::Form::new();
         let mut file_num = "0".to_string();
 
         for file in files {
 
             match file.into() {
-                AttachmentType::Bytes((bytes, filename)) => {
+                AttachmentType::Bytes{ data, filename } => {
                     multipart = multipart
-                        .part(file_num.to_string(), Part::bytes(bytes.to_vec())
-                            .file_name(filename.to_string()));
+                        .part(file_num.to_string(), Part::bytes(data.into_owned())
+                            .file_name(filename));
                 },
-                AttachmentType::File((file, filename)) => {
+                AttachmentType::File{ file, filename } => {
                     multipart = multipart
                         .part(file_num.to_string(),
                             Part::reader(file.try_clone()?)
-                                .file_name(filename.to_string()));
+                                .file_name(filename));
                 },
                 AttachmentType::Path(path) => {
                     multipart = multipart
                         .file(file_num.to_string(), path)?;
+                },
+                AttachmentType::Image(url) => {
+                    let url = Url::parse(url).map_err(|_| Error::Url(url.to_string()))?;
+                    let filename = url.path_segments()
+                      .and_then(|segments| segments.last().map(ToString::to_string))
+                      .ok_or_else(|| Error::Url(url.to_string()))?;
+                    let mut picture: Vec<u8> = vec![];
+                    let mut req = self.client.get(url).send()?;
+                    std::io::copy(&mut req, &mut picture)?;
+                    multipart = multipart
+                        .part(file_num.to_string(), Part::bytes(Cow::Borrowed(&picture[..]).into_owned())
+                            .file_name(filename.to_string()));
                 },
                 #[cfg(not(feature = "allow_exhaustive_enum"))]
                 AttachmentType::__Nonexhaustive => unreachable!(),
@@ -1675,7 +1624,7 @@ impl Http {
     pub fn fire<T: DeserializeOwned>(&self, req: Request<'_>) -> Result<T> {
         let response = self.request(req)?;
 
-        serde_json::from_reader(response).map_err(From::from)
+        response.json::<T>().map_err(From::from)
     }
 
     /// Performs a request, ratelimiting it if necessary.
@@ -1720,41 +1669,16 @@ impl Http {
     /// # }
     /// ```
     ///
-    /// [`fire`]: fn.fire.html
+    /// [`fire`]: #method.fire
     pub fn request(&self, req: Request<'_>) -> Result<ReqwestResponse> {
-        let response = perform(&self, req)?;
+        let ratelimiting_req = RatelimitedRequest::from(req);
+        let response = self.ratelimiter.perform(ratelimiting_req)?;
 
         if response.status().is_success() {
             Ok(response)
         } else {
             Err(Error::Http(Box::new(HttpError::UnsuccessfulRequest(response.into()))))
         }
-    }
-
-    pub(super) fn retry(&self, request: &Request<'_>) -> Result<ReqwestResponse> {
-        // Retry the request twice in a loop until it succeeds.
-        //
-        // If it doesn't and the loop breaks, try one last time.
-        for _ in 0..3 {
-
-            match request.build(&self.client, &self.token)?.send() {
-                Ok(response) => return Ok(response),
-                Err(reqwest_error) => {
-                    if let Some(io_error) = reqwest_error.get_ref().and_then(|e| e.downcast_ref::<std::io::Error>()) {
-
-                        if let IoErrorKind::ConnectionAborted = io_error.kind() {
-                            continue;
-                        }
-                    }
-
-                    return Err(reqwest_error.into());
-                },
-            }
-        }
-
-        request.build(&self.client, &self.token)
-            .map_err(Into::into)
-            .and_then(|b| Ok(b.send()?))
     }
 
     /// Performs a request and then verifies that the response status code is equal
@@ -1776,17 +1700,30 @@ impl Http {
     }
 }
 
+#[cfg(not(feature = "native_tls_backend"))]
+fn configure_client_backend(builder: ClientBuilder) -> ClientBuilder {
+    builder.use_rustls_tls()
+}
+
+#[cfg(feature = "native_tls_backend")]
+fn configure_client_backend(builder: ClientBuilder) -> ClientBuilder {
+    builder.use_native_tls()
+}
+
 impl AsRef<Http> for Http {
     fn as_ref(&self) -> &Http { &self }
 }
 
 impl Default for Http {
     fn default() -> Self {
+        let built = Client::builder().build().expect("Cannot build Reqwest::Client.");
+        let client = Arc::new(built);
+        let client2 = Arc::clone(&client);
+
         Self {
-            client: Client::builder().build().expect("Cannot build Reqwest::Client."),
+            client,
+            ratelimiter: Ratelimiter::new(client2, ""),
             token: "".to_string(),
-            limiter: Arc::new(Mutex::new(())),
-            routes: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 }

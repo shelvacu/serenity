@@ -8,7 +8,7 @@ license = "ISC"
 name = "serenity"
 readme = "README.md"
 repository = "https://github.com/serenity-rs/serenity.git"
-version = "0.7.0-shel4"
+version = "0.8.2-shel5"
 edition = "2018"
 
 [dependencies]
@@ -17,13 +17,17 @@ log = "0.4"
 parking_lot = "0.9"
 serde_json = "1"
 
+[dependencies.static_assertions]
+optional = true
+version = "1.1"
+
 [dependencies.audiopus]
 optional = true
 version = "0.1"
 
 [dependencies.command_attr]
 path = "./command_attr"
-version = "0.1"
+version = "0.2.0"
 optional = true
 
 [dependencies.serde]
@@ -32,11 +36,11 @@ features = ["derive"]
 
 [dependencies.uwl]
 optional = true
-version = "0.4.2"
+version = "0.5"
 
 [dependencies.base64]
 optional = true
-version = "0.10"
+version = "0.11"
 
 [dependencies.byteorder]
 optional = true
@@ -52,8 +56,9 @@ version = "1"
 
 [dependencies.reqwest]
 default-features = false
+features = ["blocking", "json"]
 optional = true
-version = "0.9"
+version = "0.10"
 
 [dependencies.rand]
 optional = true
@@ -84,7 +89,7 @@ version = "0.3"
 
 [dependencies.url]
 optional = true
-version = "2"
+version = "^2.1"
 
 [dependencies.webpki]
 optional = true
@@ -92,10 +97,10 @@ version = "0.21"
 
 [dependencies.webpki-roots]
 optional = true
-version = "0.17"
+version = "0.18"
 
 [dev-dependencies.http_crate]
-version = "0.1"
+version = "0.2"
 package = "http"
 
 [dev-dependencies.matches]
@@ -142,11 +147,12 @@ gateway = [
     "url",
     "utils",
 ]
-http = []
+http = ["url"]
+absolute_ratelimits = ["http"]
 rustls_backend = ["reqwest/rustls-tls", "tungstenite", "rustls", "webpki", "webpki-roots"]
-native_tls_backend = ["reqwest/default-tls", "tungstenite/tls"]
+native_tls_backend = ["reqwest/native-tls", "tungstenite/tls"]
 model = ["builder", "http"]
-standard_framework = ["framework", "uwl", "command_attr"]
+standard_framework = ["framework", "uwl", "command_attr", "static_assertions"]
 utils = ["base64"]
 voice = ["byteorder", "gateway", "audiopus", "rand", "sodiumoxide"]
 raw-ws-event = ["tungstenite"]

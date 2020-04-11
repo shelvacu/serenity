@@ -11,7 +11,7 @@ use super::super::prelude::*;
 use std::{
     collections::HashMap,
     mem::transmute,
-    fmt
+    fmt,
 };
 
 /// Determines to what entity an action was used on.
@@ -25,6 +25,7 @@ pub enum Target {
     Invite = 50,
     Webhook = 60,
     Emoji = 70,
+    Integration = 80,
     #[doc(hidden)]
     #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
@@ -41,7 +42,8 @@ pub enum Action {
     Invite(ActionInvite),
     Webhook(ActionWebhook),
     Emoji(ActionEmoji),
-    MessageDelete,
+    Message(ActionMessage),
+    Integration(ActionIntegration),
     #[doc(hidden)]
     #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
@@ -60,7 +62,8 @@ impl Action {
             Action::Invite(ref x) => x.num(),
             Action::Webhook(ref x) => x.num(),
             Action::Emoji(ref x) => x.num(),
-            Action::MessageDelete => 72,
+            Action::Message(ref x) => x.num(),
+            Action::Integration(ref x) => x.num(),
             #[cfg(not(feature = "allow_exhaustive_enum"))]
             Action::__Nonexhaustive => unreachable!(),
         }
@@ -122,6 +125,9 @@ pub enum ActionMember {
     BanRemove = 23,
     Update = 24,
     RoleUpdate = 25,
+    MemberMove = 26,
+    MemberDisconnect = 27,
+    BotAdd = 28,
     #[doc(hidden)]
     #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
@@ -136,6 +142,9 @@ impl ActionMember {
             ActionMember::BanRemove => 23,
             ActionMember::Update => 24,
             ActionMember::RoleUpdate => 25,
+            ActionMember::MemberMove => 26,
+            ActionMember::MemberDisconnect => 27,
+            ActionMember::BotAdd => 28,
             #[cfg(not(feature = "allow_exhaustive_enum"))]
             ActionMember::__Nonexhaustive => unreachable!(),
         }
@@ -234,12 +243,57 @@ impl ActionEmoji {
     }
 }
 
+#[derive(Debug)]
+#[repr(u8)]
+pub enum ActionMessage {
+    Delete = 72,
+    BulkDelete = 73,
+    Pin = 74,
+    Unpin = 75,
+    #[doc(hidden)]
+    __Nonexhaustive,
+}
+
+impl ActionMessage {
+    pub fn num(&self) -> u8 {
+        match *self {
+            ActionMessage::Delete => 72,
+            ActionMessage::BulkDelete => 73,
+            ActionMessage::Pin => 74,
+            ActionMessage::Unpin => 75,
+            ActionMessage::__Nonexhaustive => unreachable!(),
+        }
+    }
+}
+
+
+#[derive(Debug)]
+#[repr(u8)]
+pub enum ActionIntegration {
+    Create = 80,
+    Update = 81,
+    Delete = 82,
+    #[doc(hidden)]
+    __Nonexhaustive,
+}
+
+impl ActionIntegration {
+    pub fn num(&self) -> u8 {
+        match *self {
+            ActionIntegration::Create => 80,
+            ActionIntegration::Update => 81,
+            ActionIntegration::Delete => 82,
+            ActionIntegration::__Nonexhaustive => unreachable!(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Change {
     #[serde(rename = "key")] pub name: String,
     // TODO: Change these to an actual type.
-    #[serde(rename = "old_value")] pub old: String,
-    #[serde(rename = "new_value")] pub new: String,
+    #[serde(rename = "old_value")] pub old: Option<Value>,
+    #[serde(rename = "new_value")] pub new: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -255,8 +309,8 @@ pub struct AuditLogEntry {
     /// Determines to what entity an [`action`] was used on.
     ///
     /// [`action`]: #structfield.action
-    #[serde(with = "u64_handler")]
-    pub target_id: u64,
+    #[serde(with = "option_u64_handler")]
+    pub target_id: Option<u64>,
     /// Determines what action was done on a [`target`]
     ///
     /// [`target`]: #structfield.target
@@ -304,39 +358,6 @@ pub struct Options {
     pub role_name: Option<String>,
     #[serde(skip)]
     pub(crate) _nonexhaustive: (),
-}
-
-mod u64_handler {
-    use super::*;
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(des: D) -> StdResult<u64, D::Error> {
-        struct U64Visitor;
-
-        impl<'de> Visitor<'de> for U64Visitor {
-            type Value = u64;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("an integer or a string with a valid number inside")
-            }
-
-            // NOTE: Serde internally delegates number types below `u64` to it.
-            fn visit_u64<E: de::Error>(self, val: u64) -> StdResult<u64, E> {
-                Ok(val)
-            }
-
-            fn visit_str<E: de::Error>(self, string: &str) -> StdResult<u64, E> {
-                string.parse().map_err(de::Error::custom)
-            }
-        }
-
-        des.deserialize_any(U64Visitor)
-    }
-
-    // Due to `Serialize`.
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn serialize<S: Serializer>(num: &u64, s: S) -> StdResult<S::Ok, S::Error> {
-        s.serialize_u64(*num)
-    }
 }
 
 mod option_u64_handler {
@@ -400,12 +421,13 @@ mod action_handler {
                     1 => Action::GuildUpdate,
                     10..=12 => Action::Channel(unsafe { transmute(value) }),
                     13..=15 => Action::ChannelOverwrite(unsafe { transmute(value) }),
-                    20..=25 => Action::Member(unsafe { transmute(value) }),
+                    20..=28 => Action::Member(unsafe { transmute(value) }),
                     30..=32 => Action::Role(unsafe { transmute(value) }),
                     40..=42 => Action::Invite(unsafe { transmute(value) }),
                     50..=52 => Action::Webhook(unsafe { transmute(value) }),
                     60..=62 => Action::Emoji(unsafe { transmute(value) }),
-                    72 => Action::MessageDelete,
+                    72..=75 => Action::Message(unsafe { transmute(value) }),
+                    80..=82 => Action::Integration(unsafe { transmute(value) }),
                     _ => return Err(E::custom(format!("Unexpected action number: {}", value))),
                 })
             }
@@ -429,6 +451,7 @@ impl<'de> Deserialize<'de> for AuditLogs {
             #[serde(rename = "audit_log_entries")] Entries,
             #[serde(rename = "webhooks")] Webhooks,
             #[serde(rename = "users")] Users,
+            // TODO(field added by Discord, undocumented) #[serde(rename = "integrations")] Integrations,
         }
 
         struct EntriesVisitor;
@@ -445,29 +468,40 @@ impl<'de> Deserialize<'de> for AuditLogs {
                 let mut users = None;
                 let mut webhooks = None;
 
-                while let Some(field) = map.next_key()? {
-                    match field {
-                        Field::Entries => {
+                loop {
+                    match map.next_key() {
+                        Ok(Some(Field::Entries)) => {
                             if audit_log_entries.is_some() {
                                 return Err(de::Error::duplicate_field("entries"));
                             }
 
                             audit_log_entries = Some(map.next_value::<Vec<AuditLogEntry>>()?);
-                        },
-                        Field::Webhooks => {
+                        }
+                        Ok(Some(Field::Webhooks)) => {
                             if webhooks.is_some() {
                                 return Err(de::Error::duplicate_field("webhooks"));
                             }
 
                             webhooks = Some(map.next_value::<Vec<Webhook>>()?);
-                        },
-                        Field::Users => {
+                        }
+                        Ok(Some(Field::Users)) => {
                             if users.is_some() {
                                 return Err(de::Error::duplicate_field("users"));
                             }
 
                             users = Some(map.next_value::<Vec<User>>()?);
-                        },
+                        }
+                        Ok(None) => break, // No more keys
+                        Err(e) => if e.to_string().contains("unknown field") {
+                            // e is of type <V as MapAccess>::Error, which is a macro-defined trait, ultimately
+                            // implemented by serde::de::value::Error. Seeing as every error is a simple string and not
+                            // using a proper Error num, the best we can do here is to check if the string contains
+                            // this error. This was added because Discord randomly started sending new fields.
+                            // But no JSON deserializer should ever error over this.
+                            map.next_value::<serde_json::Value>()?; // Actually read the value to avoid syntax errors
+                        } else {
+                            return Err(e)
+                        }
                     }
                 }
 

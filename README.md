@@ -1,4 +1,4 @@
-[![ci-badge][]][ci] [![docs-badge][]][docs] [![guild-badge][]][guild] [![crates.io version]][crates.io link] [![rust 1.35.0+ badge]][rust 1.35.0+ link]
+[![ci-badge][]][ci] [![docs-badge][]][docs] [![guild-badge][]][guild] [![crates.io version]][crates.io link] [![rust 1.39.0+ badge]][rust 1.39.0+ link]
 
 # serenity
 
@@ -51,11 +51,9 @@ use serenity::framework::standard::{
     }
 };
 
-group!({
-    name: "general",
-    options: {},
-    commands: [ping],
-});
+#[group]
+#[commands(ping)]
+struct General;
 
 use std::env;
 
@@ -97,10 +95,10 @@ Add the following to your `Cargo.toml` file:
 
 ```toml
 [dependencies]
-serenity = "0.6"
+serenity = "0.8"
 ```
 
-Serenity supports a minimum of Rust 1.35.
+Serenity supports a minimum of Rust 1.37.
 
 # Features
 
@@ -111,7 +109,7 @@ Cargo.toml:
 [dependencies.serenity]
 default-features = false
 features = ["pick", "your", "feature", "names", "here"]
-version = "0.6"
+version = "0.8"
 ```
 
 The default features are: `builder`, `cache`, `client`, `framework`, `gateway`,
@@ -139,6 +137,10 @@ the HTTP functions.
 connected to and audio can be sent/received.
 - **default_native_tls**: Default features but using `native_tls_backend`
 instead of `rustls_backend`.
+- **absolute_ratelimits**: Whether the library should use your system clock to avoid
+ratelimits, or use the interval given by Discord that might be less efficient
+due to latency in the network. If you turn this feature on, it is recommended to
+synchronise your clock with an NTP server (such as Google's).
 
 Serenity offers two TLS-backends, `rustls_backend` by default, you need to pick
 one if you do not use the default features:
@@ -166,7 +168,7 @@ features = [
     "utils",
     "rustls_backend",
 ]
-version = "0.6"
+version = "0.8"
 ```
 
 # Dependencies
@@ -211,7 +213,7 @@ Voice + youtube-dl:
 [`validate_token`]: https://docs.rs/serenity/*/serenity/client/fn.validate_token.html
 [cache docs]: https://docs.rs/serenity/*/serenity/cache/index.html
 [ci]: https://dev.azure.com/serenity-org/serenity/_build?definitionId=1
-[ci-badge]: https://img.shields.io/azure-devops/build/serenity-org/1ce9579e-03bc-499f-9302-4180a2dfec6f/1/current.svg?style=flat-square
+[ci-badge]: https://img.shields.io/azure-devops/build/serenity-org/1ce9579e-03bc-499f-9302-4180a2dfec6f/1/next.svg?style=flat-square
 [client's module-level documentation]: https://docs.rs/serenity/*/serenity/client/index.html
 [crates.io link]: https://crates.io/crates/serenity
 [crates.io version]: https://img.shields.io/crates/v/serenity.svg?style=flat-square
@@ -222,12 +224,12 @@ Voice + youtube-dl:
 [gateway docs]: https://docs.rs/serenity/*/serenity/gateway/index.html
 [guild]: https://discord.gg/WBdGJCc
 [guild-badge]: https://img.shields.io/discord/381880193251409931.svg?style=flat-square&colorB=7289DA
-[library:Discord.net]: https://github.com/RogueException/Discord.Net
+[library:Discord.net]: https://github.com/discord-net/Discord.Net
 [library:JDA]: https://github.com/DV8FromTheWorld/JDA
 [library:disco]: https://github.com/b1naryth1ef/disco
 [library:discordrb]: https://github.com/meew0/discordrb
-[library:discord.js]: https://github.com/hydrabolt/discord.js
+[library:discord.js]: https://github.com/discordjs/discord.js
 [library:discord.py]: https://github.com/Rapptz/discord.py
 [logo]: https://raw.githubusercontent.com/serenity-rs/serenity/current/logo.png
-[rust 1.35.0+ badge]: https://img.shields.io/badge/rust-1.35.0+-93450a.svg?style=flat-square
-[rust 1.35.0+ link]: https://blog.rust-lang.org/2019/05/23/Rust-1.35.0.html
+[rust 1.39.0+ badge]: https://img.shields.io/badge/rust-1.39.0+-93450a.svg?style=flat-square
+[rust 1.39.0+ link]: https://blog.rust-lang.org/2019/11/07/Rust-1.39.0.html

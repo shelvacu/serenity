@@ -8,10 +8,11 @@ use std::sync::{
     mpsc::Sender,
 };
 use typemap::ShareMap;
+
+use crate::http::Http;
+
 #[cfg(feature = "cache")]
 pub use crate::cache::{Cache, CacheRwLock};
-#[cfg(feature = "http")]
-use crate::http::Http;
 
 /// The context is a general utility struct provided on event dispatches, which
 /// helps with dealing with the current "context" of the event dispatch.
@@ -46,6 +47,7 @@ pub struct Context {
 
 impl Context {
     /// Create a new Context to be passed to an event handler.
+    #[cfg(feature = "cache")]
     pub(crate) fn new(
         data: Arc<RwLock<ShareMap>>,
         runner_tx: Sender<InterMessage>,
@@ -59,6 +61,22 @@ impl Context {
             data,
             cache_and_http,
             raw_event,
+        }
+    }
+
+    /// Create a new Context to be passed to an event handler.
+    #[cfg(not(feature = "cache"))]
+    pub(crate) fn new(
+        data: Arc<RwLock<ShareMap>>,
+        runner_tx: Sender<InterMessage>,
+        shard_id: u64,
+        http: Arc<Http>,
+    ) -> Context {
+        Context {
+            shard: ShardMessenger::new(runner_tx),
+            shard_id,
+            data,
+            http,
         }
     }
 
@@ -346,7 +364,6 @@ impl Context {
     }
 }
 
-#[cfg(feature = "http")]
 impl AsRef<Http> for Context {
     fn as_ref(&self) -> &Http { self.cache_and_http.http.as_ref() }
 }

@@ -24,22 +24,22 @@ mod context;
 mod dispatch;
 mod error;
 mod event_handler;
+mod extras;
 
 pub use self::{
     context::Context,
     error::Error as ClientError,
     event_handler::{EventHandler, RawEventHandler},
+    extras::Extras,
 };
 
-#[cfg(any(feature = "cache", feature = "http"))]
 pub use crate::CacheAndHttp;
-
-// Note: the following re-exports are here for backwards compatibility
-pub use crate::gateway;
-pub use crate::http as rest;
 
 #[cfg(feature = "cache")]
 pub use crate::cache::{Cache, CacheRwLock};
+
+#[cfg(feature = "cache")]
+use std::time::Duration;
 
 use crate::internal::prelude::*;
 use parking_lot::Mutex;
@@ -56,13 +56,7 @@ use crate::framework::Framework;
 use crate::model::id::UserId;
 #[cfg(feature = "voice")]
 use self::bridge::voice::ClientVoiceManager;
-#[cfg(feature = "http")]
 use crate::http::Http;
-#[cfg(feature = "cache")]
-use std::time::Duration;
-
-struct DummyRawEventHandler;
-impl RawEventHandler for DummyRawEventHandler {}
 
 /// The Client is the way to be able to start sending authenticated requests
 /// over the REST API, as well as initializing a WebSocket connection through
@@ -340,17 +334,73 @@ impl Client {
     /// #    try_main().unwrap();
     /// # }
     /// ```
-    pub fn new<H>(token: impl AsRef<str>, handler: H) -> Result<Self>
-        where H: EventHandler + Send + Sync + 'static {
-
-        Self::new_with_handlers(token.as_ref(), Some(handler), None::<DummyRawEventHandler>)
+    pub fn new<H: EventHandler + 'static>(token: impl AsRef<str>, handler: H) -> Result<Self> {
+        Self::new_with_extras(token, |e| e.event_handler(handler))
     }
+
     /// Creates a client with an optional Handler. If you pass `None`, events are never parsed, but
     /// they can be received by registering a RawHandler.
+    #[deprecated(since = "0.8.0", note = "Replaced by `new_with_extras`.")]
     pub fn new_with_handlers<H, RH>(token: impl AsRef<str>, handler: Option<H>, raw_handler: Option<RH>) -> Result<Self>
-        where H: EventHandler + Send + Sync + 'static,
-              RH: RawEventHandler + Send + Sync + 'static {
-        let token = token.as_ref().trim().to_string();
+        where H: EventHandler + 'static, RH: RawEventHandler + 'static
+    {
+        Self::new_with_extras(token, |e| {
+            if let Some(handler) = handler {
+                e.event_handler(handler);
+            }
+
+            if let Some(raw_handler) = raw_handler {
+                e.raw_event_handler(raw_handler);
+            }
+
+            e
+        })
+    }
+
+    /// Creates a Client for a bot user and sets a cache update timeout.
+    /// If set to some duration, updating the cache will try to claim a
+    /// write-lock for given duration and skip received event but also
+    /// issue a deadlock-warning upon failure.
+    /// If `duration` is set to `None`, updating the cache will try to claim
+    /// a write-lock until success and potentially deadlock.
+    #[cfg(feature = "cache")]
+    #[deprecated(since = "0.8.0", note = "Replaced by `new_with_extras`.")]
+    pub fn new_with_cache_update_timeout<H>(token: impl AsRef<str>, handler: H, duration: Option<Duration>) -> Result<Self>
+        where H: EventHandler + 'static
+    {
+        Self::new_with_extras(token, |e| {
+            e.event_handler(handler);
+
+            if let Some(duration) = duration {
+                e.cache_update_timeout(duration);
+            }
+
+            e
+        })
+    }
+
+    /// Creates a client with extra configuration.
+    pub fn new_with_extras(token: impl AsRef<str>, f: impl FnOnce(&mut Extras) -> &mut Extras) -> Result<Self>
+    {
+        let token = token.as_ref().trim();
+
+        let token = if token.starts_with("Bot ") {
+            token.to_string()
+        } else {
+            format!("Bot {}", token)
+        };
+
+        let mut extras = Extras::default();
+
+        f(&mut extras);
+
+        let Extras {
+            event_handler,
+            raw_event_handler,
+            #[cfg(feature = "cache")]
+            timeout,
+            guild_subscriptions,
+        } = extras;
 
         let http = Http::new_with_token(&token);
 
@@ -358,8 +408,6 @@ impl Client {
         let threadpool = ThreadPool::with_name(name, 5);
         let url = Arc::new(Mutex::new(http.get_gateway()?.url));
         let data = Arc::new(RwLock::new(ShareMap::custom()));
-        let event_handler = handler.map(Arc::new);
-        let raw_event_handler = raw_handler.map(Arc::new);
 
         #[cfg(feature = "framework")]
         let framework = Arc::new(Mutex::new(None));
@@ -370,10 +418,8 @@ impl Client {
         )));
 
         let cache_and_http = Arc::new(CacheAndHttp {
-            #[cfg(feature = "cache")]
             cache: CacheRwLock::default(),
-            #[cfg(feature = "cache")]
-            update_cache_timeout: None,
+            update_cache_timeout: timeout,
             #[cfg(feature = "http")]
             http: Arc::new(http),
             __nonexhaustive: (),
@@ -394,107 +440,7 @@ impl Client {
                 voice_manager: &voice_manager,
                 ws_url: &url,
                 cache_and_http: &cache_and_http,
-            })
-        };
-
-        Ok(Client {
-            ws_uri: url,
-            #[cfg(feature = "framework")]
-            framework,
-            data,
-            shard_manager,
-            shard_manager_worker,
-            threadpool,
-            #[cfg(feature = "voice")]
-            voice_manager,
-            cache_and_http,
-        })
-    }
-
-    /// Creates a Client for a bot user and sets a cache update timeout.
-    /// If set to some duration, updating the cache will try to claim a
-    /// write-lock for given duration and skip received event but also
-    /// issue a deadlock-warning upon failure.
-    /// If `duration` is set to `None`, updating the cache will try to claim
-    /// a write-lock until success and potentially deadlock.
-    ///
-    /// Discord has a requirement of prefixing bot tokens with `"Bot "`, which
-    /// this function will automatically do for you if not already included.
-    ///
-    /// # Examples
-    ///
-    /// Create a Client, using a token from an environment variable:
-    ///
-    /// ```rust,no_run
-    /// # use serenity::prelude::EventHandler;
-    /// struct Handler;
-    ///
-    /// impl EventHandler for Handler {}
-    /// # use std::error::Error;
-    /// #
-    /// # fn try_main() -> Result<(), Box<Error>> {
-    /// use serenity::Client;
-    /// use std::env;
-    ///
-    /// let token = env::var("DISCORD_TOKEN")?;
-    /// let client = Client::new_with_cache_update_timeout(&token, Handler, None)?;
-    /// # Ok(())
-    /// # }
-    /// #
-    /// # fn main() {
-    /// #    try_main().unwrap();
-    /// # }
-    /// ```
-    #[cfg(all(feature = "cache", feature = "http"))]
-    pub fn new_with_cache_update_timeout<H>(token: impl AsRef<str>, handler: H, duration: Option<Duration>) -> Result<Self>
-        where H: EventHandler + Send + Sync + 'static {
-        let token = token.as_ref().trim();
-
-        let token = if token.starts_with("Bot ") {
-            token.to_string()
-        } else {
-            format!("Bot {}", token)
-        };
-
-        let http = Http::new_with_token(&token);
-
-        let name = "serenity client".to_owned();
-        let threadpool = ThreadPool::with_name(name, 5);
-        let url = Arc::new(Mutex::new(http.get_gateway()?.url));
-        let data = Arc::new(RwLock::new(ShareMap::custom()));
-        let event_handler = Some(Arc::new(handler));
-
-        #[cfg(feature = "framework")]
-        let framework = Arc::new(Mutex::new(None));
-        #[cfg(feature = "voice")]
-        let voice_manager = Arc::new(Mutex::new(ClientVoiceManager::new(
-            0,
-            UserId(0),
-        )));
-
-        let cache_and_http = Arc::new(CacheAndHttp {
-            cache: CacheRwLock::default(),
-            update_cache_timeout: duration,
-            #[cfg(feature = "http")]
-            http: Arc::new(http),
-            __nonexhaustive: (),
-        });
-
-        let (shard_manager, shard_manager_worker) = {
-            ShardManager::new(ShardManagerOptions {
-                data: &data,
-                event_handler: &event_handler,
-                raw_event_handler: &None::<Arc<DummyRawEventHandler>>,
-                #[cfg(feature = "framework")]
-                framework: &framework,
-                shard_index: 0,
-                shard_init: 0,
-                shard_total: 0,
-                threadpool: threadpool.clone(),
-                #[cfg(feature = "voice")]
-                voice_manager: &voice_manager,
-                ws_url: &url,
-                cache_and_http: &cache_and_http,
+                guild_subscriptions,
             })
         };
 
@@ -545,11 +491,9 @@ impl Client {
     /// }
     ///
     /// // Commands must be intermediately handled through groups.
-    /// group!({
-    ///     name: "pingpong",
-    ///     options: {},
-    ///     commands: [ping],
-    /// });
+    /// #[group("pingpong")]
+    /// #[commands(ping)]
+    /// struct PingPong;
     /// #
     /// # fn try_main() -> Result<(), Box<dyn Error>> {
     ///
@@ -676,7 +620,6 @@ impl Client {
     /// ```
     ///
     /// [gateway docs]: ../gateway/index.html#sharding
-    #[cfg(feature = "http")]
     pub fn start(&mut self) -> Result<()> {
         self.start_connection([0, 0, 1])
     }
@@ -729,7 +672,6 @@ impl Client {
     ///
     /// [`ClientError::Shutdown`]: enum.ClientError.html#variant.Shutdown
     /// [gateway docs]: ../gateway/index.html#sharding
-    #[cfg(feature = "http")]
     pub fn start_autosharded(&mut self) -> Result<()> {
         let (x, y) = {
             let res = self.cache_and_http.http.get_bot_gateway()?;
@@ -817,7 +759,6 @@ impl Client {
     /// [`start`]: #method.start
     /// [`start_autosharded`]: #method.start_autosharded
     /// [gateway docs]: ../gateway/index.html#sharding
-    #[cfg(feature = "http")]
     pub fn start_shard(&mut self, shard: u64, shards: u64) -> Result<()> {
         self.start_connection([shard, shard, shards])
     }
@@ -872,7 +813,6 @@ impl Client {
     /// [`start_shard`]: #method.start_shard
     /// [`start_shard_range`]: #method.start_shard_range
     /// [Gateway docs]: ../gateway/index.html#sharding
-    #[cfg(feature = "http")]
     pub fn start_shards(&mut self, total_shards: u64) -> Result<()> {
         self.start_connection([0, total_shards - 1, total_shards])
     }
@@ -943,7 +883,6 @@ impl Client {
     /// [`start_shard`]: #method.start_shard
     /// [`start_shards`]: #method.start_shards
     /// [Gateway docs]: ../gateway/index.html#sharding
-    #[cfg(feature = "http")]
     pub fn start_shard_range(&mut self, range: [u64; 2], total_shards: u64) -> Result<()> {
         self.start_connection([range[0], range[1], total_shards])
     }
@@ -961,7 +900,6 @@ impl Client {
     // an error.
     //
     // [`ClientError::Shutdown`]: enum.ClientError.html#variant.Shutdown
-    #[cfg(feature = "http")]
     fn start_connection(&mut self, shard_data: [u64; 3]) -> Result<()> {
         #[cfg(feature = "voice")]
         self.voice_manager.lock().set_shard_count(shard_data[2]);

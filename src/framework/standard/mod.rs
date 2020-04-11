@@ -1,6 +1,6 @@
 pub mod help_commands;
 pub mod macros {
-    pub use command_attr::{command, group, group_options, help, check};
+    pub use command_attr::{command, group, help, check};
 }
 
 mod args;
@@ -8,7 +8,7 @@ mod configuration;
 mod parse;
 mod structures;
 
-pub use args::{Args, Delimiter, Error as ArgError, Iter};
+pub use args::{Args, Delimiter, Error as ArgError, Iter, RawArguments};
 pub use configuration::{Configuration, WithWhiteSpace};
 pub use structures::*;
 
@@ -29,9 +29,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use threadpool::ThreadPool;
-use uwl::{UnicodeStream, StrExt};
 #[allow(unused_imports)]
 use log::{error, debug, info, trace, warn};
+use uwl::Stream;
 
 #[cfg(feature = "cache")]
 use crate::cache::CacheRwLock;
@@ -358,11 +358,9 @@ impl StandardFramework {
     ///     Ok(())
     /// }
     ///
-    /// group!({
-    ///   name: "bingbong",
-    ///   options: {},
-    ///   commands: [ping, pong],
-    /// });
+    /// #[group("bingbong")]
+    /// #[commands(ping, pong)]
+    /// struct BingBong;
     ///
     /// # fn main() -> Result<(), Box<dyn StdError>> {
     /// #   let mut client = Client::new("token", Handler)?;
@@ -389,9 +387,12 @@ impl StandardFramework {
     /// [`group`]: #method.group
     pub fn group_add(&mut self, group: &'static CommandGroup) {
         let map = if group.options.prefixes.is_empty() {
-            Map::Prefixless(GroupMap::new(&group.sub_groups), CommandMap::new(&group.commands))
+            Map::Prefixless(
+                GroupMap::new(&group.options.sub_groups, &self.config),
+                CommandMap::new(&group.options.commands, &self.config),
+            )
         } else {
-            Map::WithPrefixes(GroupMap::new(&[group]))
+            Map::WithPrefixes(GroupMap::new(&[group], &self.config))
         };
 
         self.groups.push((group, map));
@@ -625,7 +626,7 @@ impl StandardFramework {
 
 impl Framework for StandardFramework {
     fn dispatch(&mut self, mut ctx: Context, msg: Message, threadpool: &ThreadPool) {
-        let mut stream = UnicodeStream::new(&msg.content);
+        let mut stream = Stream::new(&msg.content);
 
         stream.take_while(|s| s.is_whitespace());
 
@@ -810,6 +811,7 @@ impl Framework for StandardFramework {
 pub trait CommonOptions {
     fn required_permissions(&self) -> &Permissions;
     fn allowed_roles(&self) -> &'static [&'static str];
+    fn checks(&self) -> &'static [&'static Check];
     fn only_in(&self) -> OnlyIn;
     fn help_available(&self) -> bool;
     fn owners_only(&self) -> bool;
@@ -823,6 +825,10 @@ impl CommonOptions for &GroupOptions {
 
     fn allowed_roles(&self) -> &'static [&'static str] {
         &self.allowed_roles
+    }
+
+    fn checks(&self) -> &'static [&'static Check] {
+        &self.checks
     }
 
     fn only_in(&self) -> OnlyIn {
@@ -849,6 +855,10 @@ impl CommonOptions for &CommandOptions {
 
     fn allowed_roles(&self) -> &'static [&'static str] {
         &self.allowed_roles
+    }
+
+    fn checks(&self) -> &'static [&'static Check] {
+        &self.checks
     }
 
     fn only_in(&self) -> OnlyIn {

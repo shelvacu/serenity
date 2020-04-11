@@ -51,14 +51,14 @@ impl ShardMessenger {
     ///
     /// ```rust,no_run
     /// # use parking_lot::Mutex;
-    /// # use serenity::client::gateway::Shard;
+    /// # use serenity::gateway::Shard;
     /// # use std::error::Error;
     /// # use std::sync::Arc;
     /// #
     /// # fn try_main() -> Result<(), Box<Error>> {
     /// #     let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1])?;
+    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1], true)?;
     /// #
     /// use serenity::model::id::GuildId;
     ///
@@ -78,14 +78,14 @@ impl ShardMessenger {
     ///
     /// ```rust,no_run
     /// # use parking_lot::Mutex;
-    /// # use serenity::client::gateway::Shard;
+    /// # use serenity::gateway::Shard;
     /// # use std::error::Error;
     /// # use std::sync::Arc;
     /// #
     /// # fn try_main() -> Result<(), Box<Error>> {
     /// #     let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1])?;
+    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1], true)?;
     /// #
     /// use serenity::model::id::GuildId;
     ///
@@ -128,14 +128,14 @@ impl ShardMessenger {
     ///
     /// ```rust,no_run
     /// # use parking_lot::Mutex;
-    /// # use serenity::client::gateway::Shard;
+    /// # use serenity::gateway::Shard;
     /// # use std::error::Error;
     /// # use std::sync::Arc;
     /// #
     /// # fn try_main() -> Result<(), Box<Error>> {
     /// #     let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1])?;
+    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1], true)?;
     /// use serenity::model::gateway::Activity;
     ///
     /// shard.set_activity(Some(Activity::playing("Heroes of the Storm")));
@@ -162,14 +162,14 @@ impl ShardMessenger {
     ///
     /// ```rust,ignore
     /// # use parking_lot::Mutex;
-    /// # use serenity::client::gateway::Shard;
+    /// # use serenity::gateway::Shard;
     /// # use std::error::Error;
     /// # use std::sync::Arc;
     /// #
     /// # fn try_main() -> Result<(), Box<Error>> {
     /// #     let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1])?;
+    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1], true)?;
     /// #
     /// use serenity::model::{Activity, OnlineStatus};
     ///
@@ -202,14 +202,14 @@ impl ShardMessenger {
     ///
     /// ```rust,no_run
     /// # use parking_lot::Mutex;
-    /// # use serenity::client::gateway::Shard;
+    /// # use serenity::gateway::Shard;
     /// # use std::error::Error;
     /// # use std::sync::Arc;
     /// #
     /// # fn try_main() -> Result<(), Box<Error>> {
     /// #     let mutex = Arc::new(Mutex::new("".to_string()));
     /// #
-    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1])?;
+    /// #     let mut shard = Shard::new(mutex.clone(), "", [0, 1], true)?;
     /// #
     /// use serenity::model::user::OnlineStatus;
     ///

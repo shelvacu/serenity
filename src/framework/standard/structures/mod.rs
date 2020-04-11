@@ -26,7 +26,11 @@ pub enum OnlyIn {
     __Nonexhaustive,
 }
 
-#[derive(Debug, PartialEq)]
+impl Default for OnlyIn {
+    fn default() -> Self { Self::None }
+}
+
+#[derive(Debug, Default, PartialEq)]
 pub struct CommandOptions {
     /// A set of checks to be called prior to executing the command. The checks
     /// will short-circuit on the first check that returns `false`.
@@ -43,7 +47,7 @@ pub struct CommandOptions {
     /// Command usage schema, used by other commands.
     pub usage: Option<&'static str>,
     /// Example arguments, used by other commands.
-    pub example: Option<&'static str>,
+    pub examples: &'static [&'static str],
     /// Minimum amount of arguments that should be passed.
     pub min_args: Option<u16>,
     /// Maximum amount of arguments that can be passed.
@@ -62,20 +66,6 @@ pub struct CommandOptions {
     pub owner_privilege: bool,
     /// Other commands belonging to this command.
     pub sub_commands: &'static [&'static Command],
-}
-
-#[derive(Debug, PartialEq)]
-pub struct GroupOptions {
-    pub prefixes: &'static [&'static str],
-    pub only_in: OnlyIn,
-    pub owners_only: bool,
-    pub owner_privilege: bool,
-    pub help_available: bool,
-    pub allowed_roles: &'static [&'static str],
-    pub required_permissions: Permissions,
-    pub checks: &'static [&'static Check],
-    pub default_command: Option<&'static Command>,
-    pub description: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -217,6 +207,8 @@ pub struct HelpOptions {
     pub lacking_permissions: HelpBehaviour,
     /// If a user lacks ownership, this will treat how these commands will be displayed.
     pub lacking_ownership: HelpBehaviour,
+    /// If conditions (of a check) may be lacking by the user, this will treat how these commands will be displayed.
+    pub lacking_conditions: HelpBehaviour,
     /// If a user is using the help-command in a channel where a command is not available,
     /// this behaviour will be executed.
     pub wrong_channel: HelpBehaviour,
@@ -231,13 +223,26 @@ pub struct HelpOptions {
     pub indention_prefix: &'static str,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct CommandGroup {
-    pub help_name: &'static str,
-    pub name: &'static str,
-    pub options: &'static GroupOptions,
+#[derive(Debug, Default, PartialEq)]
+pub struct GroupOptions {
+    pub prefixes: &'static [&'static str],
+    pub only_in: OnlyIn,
+    pub owners_only: bool,
+    pub owner_privilege: bool,
+    pub help_available: bool,
+    pub allowed_roles: &'static [&'static str],
+    pub required_permissions: Permissions,
+    pub checks: &'static [&'static Check],
+    pub default_command: Option<&'static Command>,
+    pub description: Option<&'static str>,
     pub commands: &'static [&'static Command],
     pub sub_groups: &'static [&'static CommandGroup],
+}
+
+#[derive(Debug, PartialEq)]
+pub struct CommandGroup {
+    pub name: &'static str,
+    pub options: &'static GroupOptions,
 }
 
 #[cfg(test)]

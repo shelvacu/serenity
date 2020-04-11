@@ -44,31 +44,30 @@
 //!
 //!     Ok(())
 //! }
-//! 
+//!
 //! #[command]
 //! fn ping(ctx: &mut Context, msg: &Message) -> CommandResult {
 //!     msg.channel_id.say(&ctx, "pong!")?;
 //!
 //!     Ok(())
 //! }
-//! 
-//! group!({
-//!     name: "general",
-//!     commands: [about, ping],
-//! });
-//! 
+//!
+//! #[group]
+//! #[commands(about, ping)]
+//! struct General;
+//!
 //! struct Handler;
-//! 
+//!
 //! impl EventHandler for Handler {}
-//! 
+//!
 //! # fn main() {
 //! let mut client = Client::new(&env::var("DISCORD_TOKEN").unwrap(), Handler).unwrap();
 //!
 //! client.with_framework(StandardFramework::new()
 //!     .configure(|c| c.prefix("~"))
-//!     // The `group!` (and similarly, `#[command]`) macro generates static instances 
-//!     // containing any options you gave it. For instance, the group `name` and its `commands`. 
-//!     // Their identifiers, names you can use to refer to these instances in code, are an 
+//!     // The `#[group]` (and similarly, `#[command]`) macro generates static instances
+//!     // containing any options you gave it. For instance, the group `name` and its `commands`.
+//!     // Their identifiers, names you can use to refer to these instances in code, are an
 //!     // all-uppercased version of the `name` with a `_GROUP` suffix appended at the end.
 //!     .group(&GENERAL_GROUP));
 //! # }
@@ -85,7 +84,6 @@ pub use self::standard::StandardFramework;
 use crate::client::Context;
 use crate::model::channel::Message;
 use threadpool::ThreadPool;
-use std::sync::Arc;
 
 /// A trait for defining your own framework for serenity to use.
 ///
@@ -98,23 +96,14 @@ pub trait Framework {
 }
 
 impl<F: Framework + ?Sized> Framework for Box<F> {
-     #[inline]
+    #[inline]
     fn dispatch(&mut self, ctx: Context, msg: Message, threadpool: &ThreadPool) {
         (**self).dispatch(ctx, msg, threadpool);
     }
 }
 
-impl<T: Framework + ?Sized> Framework for Arc<T> {
-    #[inline]
-    fn dispatch(&mut self, ctx: Context, msg: Message, threadpool: &threadpool::ThreadPool) {
-        if let Some(s) = Arc::get_mut(self) {
-            (*s).dispatch(ctx, msg, threadpool)
-        }
-    }
-}
-
 impl<'a, F: Framework + ?Sized> Framework for &'a mut F {
-     #[inline]
+    #[inline]
     fn dispatch(&mut self, ctx: Context, msg: Message, threadpool: &ThreadPool) {
         (**self).dispatch(ctx, msg, threadpool);
     }

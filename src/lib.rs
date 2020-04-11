@@ -36,7 +36,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! serenity = "0.6"
+//! serenity = "0.8"
 //! ```
 //!
 //! [`Cache`]: cache/struct.Cache.html
@@ -98,9 +98,9 @@ pub use tungstenite::Message as WsMessage;
 use crate::cache::CacheRwLock;
 #[cfg(feature = "cache")]
 use std::time::Duration;
-#[cfg(any(feature = "client", feature = "http"))]
+#[cfg(feature = "client")]
 use std::sync::Arc;
-#[cfg(all(feature = "client", feature = "http"))]
+#[cfg(feature = "client")]
 use crate::http::Http;
 
 
@@ -108,10 +108,9 @@ use crate::http::Http;
 #[derive(Default)]
 pub struct CacheAndHttp {
     #[cfg(feature = "cache")]
-    pub cache: CacheRwLock,//Arc<RwLock<Cache>>,
+    pub cache: CacheRwLock,
     #[cfg(feature = "cache")]
     pub update_cache_timeout: Option<Duration>,
-    #[cfg(feature = "http")]
     pub http: Arc<Http>,
     __nonexhaustive: (),
 }
@@ -134,3 +133,8 @@ impl AsRef<CacheRwLock> for CacheAndHttp {
 #[allow(clippy::useless_attribute)]
 #[allow(rust_2018_idioms)]
 extern crate self as serenity;
+
+// For the procedural macros in `command_attr`.
+#[cfg(feature = "standard_framework")]
+#[doc(hidden)]
+pub use static_assertions;

@@ -147,6 +147,7 @@ impl Serialize for ChannelDeleteEvent {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ChannelPinsUpdateEvent {
+    pub guild_id: Option<GuildId>,
     pub channel_id: ChannelId,
     pub last_pin_timestamp: Option<DateTime<FixedOffset>>,
     #[serde(skip)]
@@ -831,6 +832,7 @@ impl Serialize for MessageCreateEvent {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MessageDeleteBulkEvent {
+    pub guild_id: Option<GuildId>,
     pub channel_id: ChannelId,
     pub ids: Vec<MessageId>,
     #[serde(skip)]
@@ -839,6 +841,7 @@ pub struct MessageDeleteBulkEvent {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct MessageDeleteEvent {
+    pub guild_id: Option<GuildId>,
     pub channel_id: ChannelId,
     #[serde(rename = "id")] pub message_id: MessageId,
     #[serde(skip)]
@@ -848,6 +851,7 @@ pub struct MessageDeleteEvent {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MessageUpdateEvent {
     pub id: MessageId,
+    pub guild_id: Option<GuildId>,
     pub channel_id: ChannelId,
     pub kind: Option<MessageType>,
     pub content: Option<String>,
@@ -1099,6 +1103,7 @@ impl Serialize for ReactionRemoveEvent {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct ReactionRemoveAllEvent {
+    pub guild_id: Option<GuildId>,
     pub channel_id: ChannelId,
     pub message_id: MessageId,
     #[serde(skip)]
@@ -1181,6 +1186,7 @@ pub struct ResumedEvent {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TypingStartEvent {
+    pub guild_id: Option<GuildId>,
     pub channel_id: ChannelId,
     pub timestamp: u64,
     pub user_id: UserId,
@@ -1398,6 +1404,7 @@ impl<'de> Deserialize<'de> for GatewayEvent {
 /// Event received over a websocket connection
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
 pub enum Event {
     /// A websocket packet was received succesfully.
     ///
@@ -1976,6 +1983,7 @@ impl<'de> Deserialize<'de> for VoiceHeartbeatAck {
 pub struct VoiceReady {
     pub heartbeat_interval: u64,
     pub modes: Vec<String>,
+    pub ip: String, 
     pub port: u16,
     pub ssrc: u32,
     #[serde(skip)]

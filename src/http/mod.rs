@@ -23,32 +23,35 @@
 //! [`Client`]: ../client/struct.Client.html
 //! [model]: ../model/index.html
 
+pub mod client;
+pub mod error;
 pub mod ratelimiting;
-pub mod raw;
 pub mod request;
 pub mod routing;
 
-mod error;
-
 pub use reqwest::StatusCode;
+pub use self::client::*;
 pub use self::error::Error as HttpError;
-pub use self::raw::*;
 
-use reqwest::{
-    Method,
-};
+use reqwest::Method;
 use crate::model::prelude::*;
-use self::{request::Request};
+use self::request::Request;
 use std::{
+    borrow::Cow,
     fs::File,
-    sync::Arc,
     path::{Path, PathBuf},
 };
+
+#[cfg(any(feature = "client", feature = "http"))]
+use std::sync::Arc;
 
 #[cfg(feature = "cache")]
 use crate::cache::CacheRwLock;
 #[cfg(feature = "client")]
 use crate::client::Context;
+#[cfg(feature = "client")]
+use crate::CacheAndHttp;
+
 
 /// This trait will be required by functions that need [`Http`] and can
 /// optionally use a [`CacheRwLock`] to potentially avoid REST-requests.
@@ -64,7 +67,7 @@ use crate::client::Context;
 /// [`Context`], you can pass a tuple of `(CacheRwLock, Http)`.
 ///
 /// [`CacheRwLock`]: ../cache/struct.CacheRwLock.html
-/// [`Http`]: raw/struct.Http.html
+/// [`Http`]: client/struct.Http.html
 /// [`Context`]: ../client/struct.Context.html
 pub trait CacheHttp {
     #[cfg(feature = "http")]
@@ -105,6 +108,38 @@ impl CacheHttp for &&mut Context {
     fn cache(&self) -> Option<&CacheRwLock> { Some(Context::cache(&self)) }
 }
 
+#[cfg(feature = "client")]
+impl CacheHttp for CacheAndHttp {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { &self.http }
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.cache) }
+}
+
+#[cfg(feature = "client")]
+impl CacheHttp for &CacheAndHttp {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { &self.http }
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.cache) }
+}
+
+#[cfg(feature = "client")]
+impl CacheHttp for Arc<CacheAndHttp> {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { &self.http }
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.cache) }
+}
+
+#[cfg(feature = "client")]
+impl CacheHttp for &Arc<CacheAndHttp> {
+    #[cfg(feature = "http")]
+    fn http(&self) -> &Http { &self.http }
+    #[cfg(feature = "cache")]
+    fn cache(&self) -> Option<&CacheRwLock> { Some(&self.cache) }
+}
+
 #[cfg(all(feature = "cache", feature = "http"))]
 impl CacheHttp for (&CacheRwLock, &Http) {
     fn cache(&self) -> Option<&CacheRwLock> { Some(&self.0) }
@@ -118,6 +153,11 @@ impl CacheHttp for &Http {
 
 #[cfg(feature = "http")]
 impl CacheHttp for Arc<Http> {
+    fn http(&self) -> &Http { &*self }
+}
+
+#[cfg(feature = "http")]
+impl CacheHttp for &Arc<Http> {
     fn http(&self) -> &Http { &*self }
 }
 
@@ -168,22 +208,32 @@ impl LightMethod {
 #[derive(Clone, Debug)]
 pub enum AttachmentType<'a> {
     /// Indicates that the `AttachmentType` is a byte slice with a filename.
-    Bytes((&'a [u8], &'a str)),
+    Bytes{ data: Cow<'a, [u8]>, filename: String } ,
     /// Indicates that the `AttachmentType` is a `File`
-    File((&'a File, &'a str)),
+    File{ file: &'a File, filename: String },
     /// Indicates that the `AttachmentType` is a `Path`
     Path(&'a Path),
+    /// Indicates that the `AttachmentType` is an image URL.
+    Image(&'a str),
     #[doc(hidden)]
     #[cfg(not(feature = "allow_exhaustive_enum"))]
     __Nonexhaustive,
 }
 
-impl<'a> From<(&'a [u8], &'a str)> for AttachmentType<'a> {
-    fn from(params: (&'a [u8], &'a str)) -> AttachmentType<'_> { AttachmentType::Bytes(params) }
+impl<'a> From<(&'a [u8], &str)> for AttachmentType<'a> {
+    fn from(params: (&'a [u8], &str)) -> AttachmentType<'a> { AttachmentType::Bytes{ data: Cow::Borrowed(params.0), filename: params.1.to_string() } }
 }
 
 impl<'a> From<&'a str> for AttachmentType<'a> {
-    fn from(s: &'a str) -> AttachmentType<'_> { AttachmentType::Path(Path::new(s)) }
+    /// Constructs an `AttachmentType` from a string.
+    /// This string may refer to the path of a file on disk, or the http url to an image on the internet.
+    fn from(s: &'a str) -> AttachmentType<'_> {
+        if s.starts_with("http://") || s.starts_with("https://") {
+            AttachmentType::Image(s)
+        } else {
+            AttachmentType::Path(Path::new(s))
+        }
+    }
 }
 
 impl<'a> From<&'a Path> for AttachmentType<'a> {
@@ -196,8 +246,8 @@ impl<'a> From<&'a PathBuf> for AttachmentType<'a> {
     fn from(pathbuf: &'a PathBuf) -> AttachmentType<'_> { AttachmentType::Path(pathbuf.as_path()) }
 }
 
-impl<'a> From<(&'a File, &'a str)> for AttachmentType<'a> {
-    fn from(f: (&'a File, &'a str)) -> AttachmentType<'a> { AttachmentType::File((f.0, f.1)) }
+impl<'a> From<(&'a File, &str)> for AttachmentType<'a> {
+    fn from(f: (&'a File, &str)) -> AttachmentType<'a> { AttachmentType::File{ file: f.0, filename: f.1.to_string() } }
 }
 
 /// Representation of the method of a query to send for the [`get_guilds`]

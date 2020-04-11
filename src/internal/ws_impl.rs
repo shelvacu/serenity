@@ -21,10 +21,7 @@ use std::{
     net::TcpStream,
     sync::Arc,
 };
-#[cfg(not(feature = "native_tls_backend"))]
 use url::Url;
-#[cfg(not(feature = "native_tls_backend"))]
-use std::net::ToSocketAddrs;
 
 pub trait ReceiverExt {
     fn recv_json(&mut self)     -> Result<Option<(WsEvent, Result<Value>)>>;
@@ -135,20 +132,22 @@ impl From<IoError> for RustlsError {
 
 #[cfg(not(feature = "native_tls_backend"))]
 impl Display for RustlsError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult { f.write_str(self.description()) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            RustlsError::WebPKI => f.write_str("Failed to validate X.509 certificate"),
+            RustlsError::HandshakeError => f.write_str("TLS handshake failed when making the websocket connection"),
+            RustlsError::Io(inner) => Display::fmt(&inner, f),
+            RustlsError::__Nonexhaustive => unreachable!(),
+        }
+    }
 }
 
 #[cfg(not(feature = "native_tls_backend"))]
 impl StdError for RustlsError {
-    fn description(&self) -> &str {
-        use self::RustlsError::*;
-
-        match *self {
-            WebPKI => "Failed to validate X.509 certificate",
-            HandshakeError => "TLS handshake failed when making the websocket connection",
-            Io(ref inner) => inner.description(),
-            #[cfg(not(feature = "allow_exhaustive_enum"))]
-            __Nonexhaustive => unreachable!(),
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            RustlsError::Io(inner) => Some(inner),
+            _ => None,
         }
     }
 }
@@ -173,30 +172,12 @@ pub(crate) fn create_rustls_client(url: Url) -> Result<WsClient> {
 
     let session = rustls::ClientSession::new(&Arc::new(config), dns_name);
 
-    let host = url.host()
-        .ok_or_else(|| Error::Url("No host name in the URL.".into()))?;
     let port = url.port_or_known_default()
         .ok_or_else(|| Error::Url("No port number in the URL.".into()))?;
-    // We need these to ensure the lifetime is long enough,
-    // variables that would live inside the `match` would not live long enough.
-    let addr;
-    let addrs;
-    let addrs = match host {
-        url::Host::Domain(domain) => {
-            addrs = (domain, port).to_socket_addrs()?;
-            addrs.as_slice()
-        },
-        url::Host::Ipv4(ip) => {
-            addr = (ip, port).into();
-            std::slice::from_ref(&addr)
-        },
-        url::Host::Ipv6(ip) => {
-            addr = (ip, port).into();
-            std::slice::from_ref(&addr)
-        },
-    };
 
-    let socket = TcpStream::connect(&addrs)?;
+    let addrs = url.socket_addrs(|| Some(port))?;
+
+    let socket = TcpStream::connect(addrs.as_slice())?;
     let tls = rustls::StreamOwned::new(session, socket);
 
     let client = tungstenite::client(url, tls)
