@@ -41,6 +41,7 @@ impl Display for Error {
             Error::InvalidToken => f.write_str("The provided token was invalid"),
             Error::ShardBootFailure => f.write_str("Failed to (re-)boot a shard"),
             Error::Shutdown => f.write_str("The clients shards shutdown"),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Error::__Nonexhaustive => unreachable!(),
         }
     }

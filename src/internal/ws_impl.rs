@@ -137,6 +137,7 @@ impl Display for RustlsError {
             RustlsError::WebPKI => f.write_str("Failed to validate X.509 certificate"),
             RustlsError::HandshakeError => f.write_str("TLS handshake failed when making the websocket connection"),
             RustlsError::Io(inner) => Display::fmt(&inner, f),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             RustlsError::__Nonexhaustive => unreachable!(),
         }
     }

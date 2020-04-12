@@ -99,6 +99,7 @@ impl Display for Error {
             Error::Url(_) => f.write_str("Provided URL is incorrect."),
             Error::InvalidHeader(_) => f.write_str("Provided value is an invalid header value."),
             Error::Request(_) => f.write_str("Error while sending HTTP request."),
+            #[cfg(not(feature = "allow_exhaustive_enum"))]
             Error::__Nonexhaustive => unreachable!(),
         }
     }
