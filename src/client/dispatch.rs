@@ -20,7 +20,7 @@ use crate::CacheAndHttp;
 #[cfg(feature = "framework")]
 use crate::framework::Framework;
 #[cfg(feature = "cache")]
-use crate::cache::{Cache, CacheUpdate};
+use crate::cache::CacheUpdate;
 #[cfg(feature = "cache")]
 use std::fmt;
 #[cfg(feature = "cache")]
@@ -450,9 +450,9 @@ fn handle_event(
 
             threadpool.execute(move || {
                 feature_cache! {{
-                    event_handler.guild_delete(context, event.guild, _full);
+                    event_handler.guild_delete(context, event.guild.id, _full);
                 } else {
-                    event_handler.guild_delete(context, event.guild);
+                    event_handler.guild_delete(context, event.guild.id);
                 }}
             });
         },

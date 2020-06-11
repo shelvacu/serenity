@@ -39,6 +39,7 @@ pub struct Group {
     /// The Id of the group owner.
     pub owner_id: UserId,
     /// A map of the group's recipients.
+    #[serde(default )]
     #[serde(deserialize_with = "deserialize_users",
             serialize_with = "serialize_users")]
     pub recipients: HashMap<UserId, Arc<RwLock<User>>>,

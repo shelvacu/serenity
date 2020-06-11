@@ -723,7 +723,7 @@ impl User {
     #[cfg(feature = "http")]
     pub fn refresh(&mut self, cache_http: impl CacheHttp) -> Result<()> {
         self.id.to_user(cache_http).map(|replacement| {
-            mem::replace(self, replacement);
+            *self = replacement;
         })
     }
 

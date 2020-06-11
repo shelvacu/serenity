@@ -201,7 +201,9 @@ pub fn serialize_sync_user<S: Serializer>(
 pub fn deserialize_users<'de, D: Deserializer<'de>>(
     deserializer: D)
     -> StdResult<HashMap<UserId, Arc<RwLock<User>>>, D::Error> {
-    let vec: Vec<User> = Deserialize::deserialize(deserializer)?;
+    // Sometimes discord sends a null instead of the user list, dunno why
+    let maybe_vec: Option<Vec<User>> = Deserialize::deserialize(deserializer)?;
+    let vec = maybe_vec.unwrap_or_else(|| vec![]);
     let mut users = HashMap::new();
 
     for user in vec {
@@ -212,16 +214,11 @@ pub fn deserialize_users<'de, D: Deserializer<'de>>(
 }
 
 pub fn serialize_users<S: Serializer>(
-    users: &HashMap<UserId, Arc<RwLock<User>>>,
+    users_hash: &HashMap<UserId, Arc<RwLock<User>>>,
     serializer: S
 ) -> StdResult<S::Ok, S::Error> {
-    let mut seq = serializer.serialize_seq(Some(users.len()))?;
-
-    for user in users.values() {
-        seq.serialize_element(&*user.read())?;
-    }
-
-    seq.end()
+    let users_vec:Option<Vec<User>> = Some(users_hash.values().map(|user_lock| user_lock.read().clone()).collect());
+    return users_vec.serialize(serializer);
 }
 
 pub fn deserialize_u16<'de, D: Deserializer<'de>>(deserializer: D) -> StdResult<u16, D::Error> {

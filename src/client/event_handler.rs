@@ -108,13 +108,13 @@ pub trait EventHandler: Send + Sync {
     /// Provides the partial data of the guild sent by discord,
     /// and the full data from the cache, if available.
     #[cfg(feature = "cache")]
-    fn guild_delete(&self, _ctx: Context, _incomplete: PartialGuild, _full: Option<Arc<RwLock<Guild>>>) {}
+    fn guild_delete(&self, _ctx: Context, _incomplete: GuildId, _full: Option<Arc<RwLock<Guild>>>) {}
 
     /// Dispatched when a guild is deleted.
     ///
     /// Provides the partial data of the guild sent by discord.
     #[cfg(not(feature = "cache"))]
-    fn guild_delete(&self, _ctx: Context, _incomplete: PartialGuild) {}
+    fn guild_delete(&self, _ctx: Context, _incomplete: GuildId) {}
 
     /* the emojis were updated. */
 
